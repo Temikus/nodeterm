@@ -354,6 +354,7 @@ export const IPC = {
   githubIssuesQuery: 'githubIssues:query',
   githubIssuesLookup: 'githubIssues:lookup',
   githubIssuesSearch: 'githubIssues:search',
+  githubIssuesPullsForBranch: 'githubIssues:pulls-for-branch',
   githubIssuesRefresh: 'githubIssues:refresh',
   githubIssuesMove: 'githubIssues:move',
   githubIssuesCreateLabels: 'githubIssues:create-labels',

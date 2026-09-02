@@ -205,6 +205,28 @@ export interface GitHubSearchResult {
   partial: boolean
 }
 
+/** One OPEN pull request whose head is a given branch. Deliberately lean: the frame's suggestion
+ *  needs a number, a label and a state, and the live card arrives through `lookup` once the user
+ *  has actually attached it. */
+export interface GitHubBranchPull {
+  number: number
+  title: string
+  draft: boolean
+  head: string
+  updatedAt: string
+  htmlUrl: string
+  state: 'open'
+}
+
+export type GitHubPullsForBranchResult =
+  | { ok: true; pulls: GitHubBranchPull[]; fetchedAt: number; fromCache: boolean }
+  | {
+      ok: false
+      reason: 'not-approved' | 'not-authenticated' | 'configuration-changed' | 'invalid-request' |
+        'rate-limited' | 'failed'
+      message?: string
+    }
+
 export interface GitHubIssuePage {
   items: GitHubIssueCardView[]
   counts: Record<string, number>
@@ -252,6 +274,13 @@ export interface GitHubIssuesApi {
   lookup(request: GitHubLookupRequest): Promise<GitHubLookupResult>
   /** Search the cached snapshot across every column, for the attach picker. Never hits the network. */
   search(request: GitHubSearchRequest): Promise<GitHubSearchResult>
+  /** Open pull requests whose head is `branch`, for a worktree frame's suggestion. TTL-cached
+   *  host-side; `force` skips the TTL but still coalesces. */
+  pullsForBranch(request: {
+    projectId: string
+    branch: string
+    force?: boolean
+  }): Promise<GitHubPullsForBranchResult>
   refresh(projectId: string, full?: boolean): Promise<void>
   moveIssue(request: {
     projectId: string

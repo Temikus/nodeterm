@@ -1,5 +1,7 @@
 import type {
   CreateMappedLabelsResult,
+  GitHubBranchPull,
+  GitHubPullsForBranchResult,
   GitHubIssue,
   GitHubIssueCardView,
   GitHubIssuePage,
@@ -37,6 +39,12 @@ const POLL_MS = 60_000
 const LOOKUP_MISS_TTL_MS = 60_000
 const LOOKUP_MISS_MAX = 500
 
+/** How long one branch's open pull requests are reused. This TTL is the whole rate story for the
+ *  worktree suggestion — the endpoint takes no `since` and answers no ETag — so a visible frame
+ *  costs at most one request per branch per window. */
+export const BRANCH_PULLS_TTL_MS = 5 * 60_000
+const BRANCH_PULLS_MAX = 200
+
 /** Floor between two caller-driven refreshes of one project, and the longer floor for a FULL
  *  reconciliation. `refresh` is reachable from the renderer AND — for a shared project — from a
  *  relay guest, and nothing else bounds it: `state.refresh` coalesces CONCURRENT calls but not
@@ -52,6 +60,11 @@ export interface GitHubIssuesClientLike {
   getIssue(repository: string, issueNumber: number): Promise<GitHubIssue>
   getIssueOrPull(repository: string, number: number): Promise<GitHubIssue>
   updateIssue(repository: string, issueNumber: number, input: UpdateIssueInput): Promise<GitHubIssue>
+  listPullsByHead(
+    repository: string,
+    head: string,
+    options: { perPage: number }
+  ): Promise<GitHubBranchPull[]>
   listRepositoryLabels(
     repository: string,
     options: { page: number; perPage: number; etag?: string }
@@ -208,6 +221,8 @@ export class GitHubIssueService {
   private readonly statePreparations = new Map<string, Set<Promise<RepositoryState>>>()
   private readonly refreshFloors = new Map<string, { any: number; full: number }>()
   private readonly lookupMisses = new Map<string, number>()
+  private readonly branchPulls = new Map<string, { pulls: GitHubBranchPull[]; at: number }>()
+  private readonly branchPullsInFlight = new Map<string, Promise<GitHubPullsForBranchResult>>()
   private operationSequence = 0
   private readonly now: () => number
   private readonly schedule: NonNullable<ServiceOptions['setInterval']>
@@ -452,7 +467,11 @@ export class GitHubIssueService {
       const cached = (state.snapshot?.issues ?? state.partialIssues ?? [])
         .find((item) => item.number === request.number)
       if (cached) {
-        return { ok: true, source: 'cache', item: { ...cached, ...mapping(cached, context.config) } }
+        return {
+          ok: true,
+          source: 'cache',
+          item: this.withHead(context.repository, { ...cached, ...mapping(cached, context.config) })
+        }
       }
       const memoKey = `${context.repository}\0${request.number}`
       const memo = this.lookupMisses.get(memoKey)
@@ -464,7 +483,11 @@ export class GitHubIssueService {
       if (capturedEpoch !== epoch(await this.options.contextForProject(request.projectId))) {
         return { ok: false, reason: 'configuration-changed' }
       }
-      return { ok: true, source: 'api', item: { ...item, ...mapping(item, captured.config) } }
+      return {
+        ok: true,
+        source: 'api',
+        item: this.withHead(captured.repository, { ...item, ...mapping(item, captured.config) })
+      }
     } catch (error) {
       if (error instanceof ConfigurationChangedError) return { ok: false, reason: 'configuration-changed' }
       if (error instanceof GitHubHostError) return { ok: false, reason: hostReason(error) }
@@ -480,6 +503,85 @@ export class GitHubIssueService {
         ...(error instanceof Error ? { message: error.message } : {})
       }
     }
+  }
+
+  /**
+   * Open pull requests whose head is `branch`, for a worktree frame's "attach?" suggestion.
+   *
+   * The owner is taken from the APPROVED repository host-side — a renderer supplies a branch and
+   * nothing else. Results are TTL-cached and concurrent asks coalesce, so two frames on the same
+   * branch cost one request; `force` (the frame's explicit "check again") skips the TTL but still
+   * joins an in-flight read.
+   */
+  async pullsForBranch(request: {
+    projectId: string
+    branch: string
+    force?: boolean
+  }): Promise<GitHubPullsForBranchResult> {
+    const branch = typeof request.branch === 'string' ? request.branch.trim() : ''
+    if (!branch || branch.length > 255 || /[\s:]/.test(branch)) {
+      return { ok: false, reason: 'invalid-request' }
+    }
+    let captured: GitHubIssueServiceContext
+    try {
+      captured = await this.options.contextForProject(request.projectId)
+    } catch (error) {
+      if (error instanceof GitHubHostError) return { ok: false, reason: hostReason(error) }
+      return { ok: false, reason: 'failed', ...(error instanceof Error ? { message: error.message } : {}) }
+    }
+    const key = `${captured.repository}\0${branch}`
+    const cached = this.branchPulls.get(key)
+    if (cached && !request.force && this.now() - cached.at < BRANCH_PULLS_TTL_MS) {
+      return { ok: true, pulls: cached.pulls, fetchedAt: cached.at, fromCache: true }
+    }
+    const inFlight = this.branchPullsInFlight.get(key)
+    if (inFlight) return inFlight
+    const owner = captured.repository.split('/')[0]
+    let work!: Promise<GitHubPullsForBranchResult>
+    work = (async (): Promise<GitHubPullsForBranchResult> => {
+      try {
+        const pulls = await this.readWithEpoch(captured, () =>
+          captured.client.listPullsByHead(captured.repository, `${owner}:${branch}`, { perPage: 10 }))
+        const at = this.now()
+        if (this.branchPulls.size >= BRANCH_PULLS_MAX) this.branchPulls.clear()
+        this.branchPulls.set(key, { pulls, at })
+        return { ok: true, pulls, fetchedAt: at, fromCache: false }
+      } catch (error) {
+        if (error instanceof ConfigurationChangedError) return { ok: false, reason: 'configuration-changed' }
+        if (error instanceof GitHubHostError) return { ok: false, reason: hostReason(error) }
+        if (error instanceof GitHubClientError && error.code === 'rate-limited') {
+          return { ok: false, reason: 'rate-limited' }
+        }
+        return { ok: false, reason: 'failed', ...(error instanceof Error ? { message: error.message } : {}) }
+      } finally {
+        if (this.branchPullsInFlight.get(key) === work) this.branchPullsInFlight.delete(key)
+      }
+    })()
+    this.branchPullsInFlight.set(key, work)
+    return work
+  }
+
+  /** Drop every branch-pull memory. Called when the cache is cleared and when a credential
+   *  boundary moves — the answers were read under an identity that no longer applies. */
+  forgetBranchPulls(): void {
+    this.branchPulls.clear()
+  }
+
+  /** The head branch this service has seen for a number, if any — `lookup`'s ONE enrichment
+   *  point, so the poll's snapshot is never polluted with a field it did not fetch. */
+  private headFor(repository: string, number: number): string | undefined {
+    for (const [key, entry] of this.branchPulls) {
+      if (!key.startsWith(`${repository}\0`)) continue
+      const match = entry.pulls.find((pull) => pull.number === number)
+      if (match) return match.head
+    }
+    return undefined
+  }
+
+  private withHead(repository: string, item: GitHubIssueCardView): GitHubIssueCardView {
+    if (!item.pull || item.pull.head) return item
+    const head = this.headFor(repository, item.number)
+    return head ? { ...item, pull: { ...item.pull, head } } : item
   }
 
   private rememberLookupMiss(projectId: string, number: number): void {
@@ -740,6 +842,7 @@ export class GitHubIssueService {
         state.incomplete = false
         this.emitDelta(state, [], true)
       }
+      this.forgetBranchPulls()
     } finally {
       if (control.deletion === deletion) delete control.deletion
       finishDeletion()

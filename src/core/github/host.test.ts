@@ -90,6 +90,7 @@ function fixture() {
     listIssues: vi.fn(),
     getIssue: vi.fn(),
     getIssueOrPull: vi.fn(),
+    listPullsByHead: vi.fn(),
     updateIssue: vi.fn(),
     listRepositoryLabels: vi.fn(),
     createLabel: vi.fn()

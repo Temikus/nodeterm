@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { GitHubIssueCache } from './cache'
 import { GitHubClientError } from './client'
 import {
+  BRANCH_PULLS_TTL_MS,
   evictPullsToFit,
   FULL_REFRESH_MIN_INTERVAL_MS,
   GitHubIssueService,
@@ -95,6 +96,14 @@ class FixtureClient implements GitHubIssuesClientLike {
     }
     this.issues.set(number, updated)
     return structuredClone(updated)
+  }
+
+  pullHeads: string[] = []
+  pullsByHead = new Map<string, Array<{ number: number; title: string; draft: boolean; head: string; updatedAt: string; htmlUrl: string; state: 'open' }>>()
+
+  async listPullsByHead(_repository: string, head: string) {
+    this.pullHeads.push(head)
+    return structuredClone(this.pullsByHead.get(head) ?? [])
   }
 
   async listRepositoryLabels() { return { items: structuredClone(this.repositoryLabels) } }
@@ -1053,5 +1062,141 @@ describe('GitHubIssueService lookup / search (node links)', () => {
       .rejects.toThrow('invalid-query')
     expect((await service.search({ projectId: 'project-1', search: '', limit: 1 })).items)
       .toHaveLength(1)
+  })
+})
+
+describe('GitHubIssueService pullsForBranch', () => {
+  const pull = (number: number, head: string) => ({
+    number,
+    title: `PR ${number}`,
+    draft: false,
+    head,
+    updatedAt: '2026-08-09T10:00:00Z',
+    htmlUrl: `https://github.com/o/r/pull/${number}`,
+    state: 'open' as const
+  })
+
+  const build = (client: FixtureClient, now: () => number) => new GitHubIssueService({
+    cache: new GitHubIssueCache(userDataDir),
+    coordinator: new GitHubRequestCoordinator(),
+    contextForProject: async () => context(client),
+    now
+  })
+
+  it('composes the head from the approved repository’s own owner and caches it for the TTL', async () => {
+    const client = new FixtureClient([])
+    client.pullsByHead.set('o:feat/x', [pull(7, 'feat/x')])
+    let clock = 1_000
+    const service = build(client, () => clock)
+
+    const first = await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    expect(first).toMatchObject({ ok: true, fromCache: false })
+    expect(first.ok && first.pulls.map((p) => p.number)).toEqual([7])
+    expect(client.pullHeads).toEqual(['o:feat/x'])
+
+    clock += BRANCH_PULLS_TTL_MS - 1
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' }))
+      .toMatchObject({ ok: true, fromCache: true })
+    expect(client.pullHeads).toHaveLength(1)
+
+    clock += 2
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    expect(client.pullHeads).toHaveLength(2)
+  })
+
+  it('coalesces concurrent asks, and force skips the TTL but still coalesces', async () => {
+    const client = new FixtureClient([])
+    let release!: () => void
+    client.listPullsByHead = async (_repository: string, head: string) => {
+      client.pullHeads.push(head)
+      await new Promise<void>((resolve) => { release = resolve })
+      return []
+    }
+    const service = build(client, () => 1_000)
+    const both = Promise.all([
+      service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' }),
+      service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x', force: true })
+    ])
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    release()
+    await both
+    expect(client.pullHeads).toEqual(['o:feat/x'])
+  })
+
+  it('refuses a branch that could carry the head separator, and reports a rate limit as itself', async () => {
+    const client = new FixtureClient([])
+    const service = build(client, () => 1_000)
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: '' }))
+      .toEqual({ ok: false, reason: 'invalid-request' })
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'a:b' }))
+      .toEqual({ ok: false, reason: 'invalid-request' })
+    expect(client.pullHeads).toEqual([])
+
+    client.listPullsByHead = async () => { throw new GitHubClientError('rate-limited', 403) }
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' }))
+      .toEqual({ ok: false, reason: 'rate-limited' })
+  })
+
+  it('maps a host refusal to its reason', async () => {
+    const service = new GitHubIssueService({
+      cache: new GitHubIssueCache(userDataDir),
+      coordinator: new GitHubRequestCoordinator(),
+      contextForProject: async () => { throw new GitHubHostError('not-authenticated') }
+    })
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' }))
+      .toEqual({ ok: false, reason: 'not-authenticated' })
+  })
+
+  it('drops the cache on clearCache and on forgetBranchPulls', async () => {
+    const client = new FixtureClient([])
+    client.pullsByHead.set('o:feat/x', [pull(7, 'feat/x')])
+    const cache = new GitHubIssueCache(userDataDir)
+    await cache.bind('local-1', 'project-1', 'o/r', 'user-1')
+    const service = new GitHubIssueService({
+      cache,
+      coordinator: new GitHubRequestCoordinator(),
+      contextForProject: async () => context(client),
+      now: () => 1_000
+    })
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    await service.clearCache({ projectId: 'project-1' })
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    expect(client.pullHeads).toHaveLength(2)
+
+    service.forgetBranchPulls()
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    expect(client.pullHeads).toHaveLength(3)
+  })
+
+  it('is the ONE place lookup learns a head — the poll snapshot stays unpolluted', async () => {
+    const client = new FixtureClient([
+      issue(7, { pull: { draft: false, mergedAt: null } })
+    ])
+    client.pullsByHead.set('o:feat/x', [pull(7, 'feat/x')])
+    const cache = new GitHubIssueCache(userDataDir)
+    await cache.bind('local-1', 'project-1', 'o/r', 'user-1')
+    await cache.saveComplete('user-1', 'o/r', {
+      issues: [...client.issues.values()],
+      etags: {},
+      lastSuccessfulRefreshAt: 1,
+      lastFullReconciliationAt: 1
+    })
+    const service = new GitHubIssueService({
+      cache,
+      coordinator: new GitHubRequestCoordinator(),
+      contextForProject: async () => context(client),
+      now: () => 1_000
+    })
+    const before = await service.lookup({ projectId: 'project-1', number: 7 })
+    expect(before.ok && before.item.pull?.head).toBeUndefined()
+
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+    const after = await service.lookup({ projectId: 'project-1', number: 7 })
+    expect(after.ok && after.item.pull?.head).toBe('feat/x')
+
+    const page = await service.query({
+      projectId: 'project-1', columnId: null, pageSize: 50, kind: 'pull'
+    })
+    expect(page.items[0].pull?.head).toBeUndefined()
   })
 })

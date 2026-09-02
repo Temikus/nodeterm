@@ -419,6 +419,10 @@ export function buildGitHubApi(
       client.request(IPC.githubIssuesLookup, request) as ReturnType<GitHubIssuesApi['lookup']>,
     search: (request) =>
       client.request(IPC.githubIssuesSearch, request) as ReturnType<GitHubIssuesApi['search']>,
+    pullsForBranch: (request) =>
+      client.request(IPC.githubIssuesPullsForBranch, request) as ReturnType<
+        GitHubIssuesApi['pullsForBranch']
+      >,
     refresh: (projectId, full) =>
       client.request(IPC.githubIssuesRefresh, projectId, full) as Promise<void>,
     moveIssue: (request) =>

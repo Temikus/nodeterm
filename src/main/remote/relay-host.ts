@@ -205,6 +205,7 @@ export function connectRelayHost(opts: ConnectRelayHostOptions): RelayHostSessio
       case IPC.githubIssuesQuery:
       case IPC.githubIssuesLookup:
       case IPC.githubIssuesSearch:
+      case IPC.githubIssuesPullsForBranch:
       case IPC.githubIssuesMove:
         return {
           githubIssues: true,

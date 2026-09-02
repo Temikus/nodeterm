@@ -1,4 +1,5 @@
 import type {
+  GitHubBranchPull,
   GitHubIssue,
   GitHubIssueLabel,
   GitHubIssueUser,
@@ -273,6 +274,57 @@ export class GitHubIssuesClient {
     const decoded = issueFrom(value)
     if (!decoded) throw new GitHubClientError('malformed-response')
     return decoded
+  }
+
+  /**
+   * Open pull requests whose head is `<owner>:<branch>`.
+   *
+   * No `since` and no ETag: `/pulls` IGNORES `since` (measured — a day-old `since` returns the
+   * same page as none), and this read is TTL-cached in the service instead, which is what bounds
+   * it to one request per branch per window. `head` is composed host-side from the approved
+   * repository's own owner, never from a caller-supplied slug.
+   */
+  async listPullsByHead(
+    repository: string,
+    head: string,
+    options: { perPage: number }
+  ): Promise<GitHubBranchPull[]> {
+    safeRepository(repository)
+    if (!string(head, 300) || !/^[^\s:]+:[^\s]+$/.test(head) ||
+        !positiveInteger(options.perPage, 100)) {
+      throw new GitHubClientError('invalid-request')
+    }
+    const query = new URLSearchParams({
+      head, state: 'open', per_page: String(options.perPage)
+    })
+    const value = await this.json(await this.request(
+      `/repos/${repository}/pulls?${query}`, { method: 'GET' }
+    ))
+    if (!Array.isArray(value) || value.length > 100) throw new GitHubClientError('malformed-response')
+    return value.map((candidate) => {
+      const item = object(candidate)
+      const headRef = item ? object(item.head) : null
+      if (!item || !headRef || !positiveInteger(Number(item.number), Number.MAX_SAFE_INTEGER) ||
+          !string(item.title, 1_000) || !string(headRef.ref, 255) ||
+          !(item.draft === undefined || typeof item.draft === 'boolean') ||
+          !isoDate(item.updated_at) || !string(item.html_url, 2_048)) {
+        throw new GitHubClientError('malformed-response')
+      }
+      let html: URL
+      try { html = new URL(item.html_url) } catch { throw new GitHubClientError('malformed-response') }
+      if (html.protocol !== 'https:' || html.hostname !== 'github.com') {
+        throw new GitHubClientError('malformed-response')
+      }
+      return {
+        number: Number(item.number),
+        title: item.title,
+        draft: item.draft === true,
+        head: headRef.ref,
+        updatedAt: item.updated_at,
+        htmlUrl: html.toString(),
+        state: 'open' as const
+      }
+    })
   }
 
   async updateIssue(
