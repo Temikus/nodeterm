@@ -13,6 +13,7 @@ const node = (github: unknown): CanvasNodeState => ({
   size: { width: 10, height: 10 },
   title: 't',
   color: '#fff',
+  group: null,
   github: github as CanvasNodeState['github']
 })
 

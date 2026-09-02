@@ -53,7 +53,7 @@ describe('github links at the project-file boundary', () => {
           { kind: 'issue', number: -1 },
           { kind: 'issue', number: 5, title: 'x'.repeat(500), extra: 'smuggled' },
           ...Array.from({ length: 40 }, (_, index) => ({ kind: 'pull', number: index + 100 }))
-        ]
+        ] as never
       }]
     }
     const back = fileToProject(hostile, { id: 'project-1' })
