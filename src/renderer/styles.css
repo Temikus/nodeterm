@@ -1526,6 +1526,20 @@ body,
   color: var(--muted);
 }
 
+.group-node__pr-suggest {
+  position: absolute;
+  left: 12px;
+  bottom: -11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel, #1c1c1e);
+  border-radius: 6px;
+}
+
 .kanban-meta__ghlink {
   display: inline-flex;
   align-items: center;

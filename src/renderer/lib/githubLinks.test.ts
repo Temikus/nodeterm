@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GitHubIssueCardView, GitHubLink } from '@shared/github-issues'
+import type { GitHubBranchPull } from '@shared/github-issues'
 import {
   addLink,
   hasLink,
@@ -9,7 +10,8 @@ import {
   linkToBoardTitle,
   linkTooltip,
   parseLinkInput,
-  removeLink
+  removeLink,
+  suggestionFor
 } from './githubLinks'
 
 const card = (over: Partial<GitHubIssueCardView> = {}): GitHubIssueCardView => ({
@@ -116,5 +118,36 @@ describe('parseLinkInput', () => {
     expect(parseLinkInput('#0', 'o/r')).toBeNull()
     expect(parseLinkInput('fix the board', 'o/r')).toBeNull()
     expect(parseLinkInput('', 'o/r')).toBeNull()
+  })
+})
+
+describe('suggestionFor', () => {
+  const pull = (number: number, updatedAt: string): GitHubBranchPull => ({
+    number,
+    title: `PR ${number}`,
+    draft: false,
+    head: 'feat',
+    updatedAt,
+    htmlUrl: `https://github.com/o/r/pull/${number}`,
+    state: 'open'
+  })
+
+  it('offers the open pull requests newest first', () => {
+    expect(suggestionFor(undefined, [
+      pull(7, '2026-08-01T00:00:00Z'),
+      pull(8, '2026-08-09T00:00:00Z')
+    ], new Set()).map((p) => p.number)).toEqual([8, 7])
+  })
+
+  it('drops one that is already linked, and one that was dismissed', () => {
+    const pulls = [pull(7, '2026-08-09T00:00:00Z'), pull(8, '2026-08-08T00:00:00Z')]
+    expect(suggestionFor([{ kind: 'pull', number: 7 }], pulls, new Set()).map((p) => p.number))
+      .toEqual([8])
+    expect(suggestionFor(undefined, pulls, new Set([8])).map((p) => p.number)).toEqual([7])
+  })
+
+  it('does not treat an ISSUE link as covering the pull request of the same number', () => {
+    expect(suggestionFor([{ kind: 'issue', number: 7 }], [pull(7, '2026-08-09T00:00:00Z')], new Set()))
+      .toHaveLength(1)
   })
 })

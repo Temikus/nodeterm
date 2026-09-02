@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  GitHubBranchPull,
   GitHubIssueCardView,
   GitHubIssuePage,
   GitHubIssuesApi,
@@ -19,6 +20,39 @@ export const LINK_RETRY_MS = 60_000
  *  asking the same unanswerable question. */
 export type LinkGate = 'not-approved' | 'not-authenticated'
 
+/** Dismissed suggestions are MACHINE-LOCAL: the frame's branch and the pull request travel with
+ *  the repository, but "I already said no to this one" is one person's answer on one machine, so
+ *  it never goes near `.nodeterm/project.json`. */
+const DISMISSED_KEY = 'nodeterm.prSuggestDismissed'
+const DISMISSED_MAX = 500
+
+function loadDismissed(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]') as unknown
+    return new Set(Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function saveDismissed(values: Set<string>): void {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...values].slice(-DISMISSED_MAX)))
+  } catch { /* a private window simply forgets the dismissal */ }
+}
+
+/** Dismissal is per FRAME, not per branch: two frames on one branch are two pieces of work, and
+ *  answering for one must not silently answer for the other. */
+export const suggestionKey = (projectId: string, groupId: string, number: number): string =>
+  `${projectId}:${groupId}:${number}`
+
+export interface PullSuggestions {
+  branch: string
+  pulls: GitHubBranchPull[]
+  at: number
+  error?: string
+}
+
 interface CardEntry {
   card: GitHubIssueCardView
   at: number
@@ -29,6 +63,16 @@ interface GitHubLinksState {
   pending: Record<string, Record<string, true>>
   missing: Record<string, Record<string, number>>
   gate: Record<string, { reason: LinkGate; at: number }>
+  pullSuggestions: Record<string, PullSuggestions>
+  dismissed: Set<string>
+  fetchPullsForBranch(
+    api: GitHubIssuesApi,
+    projectId: string,
+    groupId: string,
+    branch: string,
+    options?: { force?: boolean }
+  ): Promise<void>
+  dismissSuggestion(projectId: string, groupId: string, number: number): void
   ensureCard(api: GitHubIssuesApi, projectId: string, link: GitHubLink): Promise<void>
   seedFromPages(projectId: string, pages: GitHubIssuePage[]): void
   invalidate(projectId: string, numbers?: number[]): void
@@ -41,6 +85,46 @@ export const useGitHubLinks = create<GitHubLinksState>((set, get) => ({
   pending: {},
   missing: {},
   gate: {},
+  pullSuggestions: {},
+  dismissed: loadDismissed(),
+
+  async fetchPullsForBranch(api, projectId, groupId, branch, options) {
+    const key = `${projectId}:${groupId}`
+    const gate = get().gate[projectId]
+    if (gate && now() - gate.at < LINK_RETRY_MS) return
+    const result = await api.pullsForBranch({
+      projectId, branch, ...(options?.force ? { force: true } : {})
+    }).catch(() => ({ ok: false as const, reason: 'failed' as const }))
+    set((s) => {
+      if (result.ok) {
+        return {
+          pullSuggestions: {
+            ...s.pullSuggestions,
+            [key]: { branch, pulls: result.pulls, at: now() }
+          }
+        }
+      }
+      const next: Partial<GitHubLinksState> = {
+        pullSuggestions: {
+          ...s.pullSuggestions,
+          [key]: { branch, pulls: [], at: now(), error: result.reason }
+        }
+      }
+      if (result.reason === 'not-approved' || result.reason === 'not-authenticated') {
+        next.gate = { ...s.gate, [projectId]: { reason: result.reason, at: now() } }
+      }
+      return next as GitHubLinksState
+    })
+  },
+
+  dismissSuggestion(projectId, groupId, number) {
+    set((s) => {
+      const dismissed = new Set(s.dismissed)
+      dismissed.add(suggestionKey(projectId, groupId, number))
+      saveDismissed(dismissed)
+      return { dismissed }
+    })
+  },
 
   async ensureCard(api, projectId, link) {
     const key = linkKey(link)

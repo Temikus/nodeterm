@@ -4,6 +4,7 @@ import {
   type GitHubLink,
   type GitHubLinkKind
 } from '@shared/github-issues'
+import type { GitHubBranchPull } from '@shared/github-issues'
 import type { ProjectKanban } from '@shared/types'
 import { pullCardState } from './githubPull'
 
@@ -111,4 +112,22 @@ const REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.
 export function linkRepository(kanban: ProjectKanban | undefined): string | undefined {
   const value = kanban?.github?.repository?.trim()
   return value && REPOSITORY.test(value) ? value : undefined
+}
+
+/**
+ * The open pull requests a worktree frame may SUGGEST attaching: those not already linked and not
+ * dismissed on this machine, newest first.
+ *
+ * Suggest, never adopt (issue #462): a bad guess costs a dismissed prompt, not a wrong chip, so
+ * nothing here ever writes a link — the caller renders these and waits for a click.
+ */
+export function suggestionFor(
+  links: GitHubLink[] | undefined,
+  pulls: GitHubBranchPull[],
+  dismissed: ReadonlySet<number>
+): GitHubBranchPull[] {
+  return pulls
+    .filter((pull) => !dismissed.has(pull.number) &&
+      !hasLink(links, { kind: 'pull', number: pull.number }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number)
 }

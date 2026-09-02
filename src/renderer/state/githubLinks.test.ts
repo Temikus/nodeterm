@@ -38,9 +38,23 @@ function api(lookup: (number: number) => Promise<GitHubLookupResult>): {
   }
 }
 
+const memory = new Map<string, string>()
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => { memory.set(key, value) },
+    removeItem: (key: string) => { memory.delete(key) },
+    clear: () => memory.clear()
+  }
+})
+
 beforeEach(() => {
   vi.useRealTimers()
-  useGitHubLinks.setState({ cards: {}, pending: {}, missing: {}, gate: {} })
+  memory.clear()
+  useGitHubLinks.setState({
+    cards: {}, pending: {}, missing: {}, gate: {}, pullSuggestions: {}, dismissed: new Set()
+  })
 })
 
 describe('ensureCard', () => {
@@ -135,5 +149,42 @@ describe('seedFromPages / invalidate', () => {
     useGitHubLinks.getState().invalidate('p1')
     expect(linkCard('p1', { kind: 'issue', number: 2 })).toBeUndefined()
     expect(useGitHubLinks.getState().gate.p1).toBeUndefined()
+  })
+})
+
+describe('pull suggestions', () => {
+  const client = (result: unknown): GitHubIssuesApi =>
+    ({ pullsForBranch: async () => result } as unknown as GitHubIssuesApi)
+
+  const pull = { number: 7, title: 'PR 7', draft: false, head: 'feat', updatedAt: 'x', htmlUrl: 'u', state: 'open' as const }
+
+  it('records a branch’s pulls under the frame that asked', async () => {
+    await useGitHubLinks.getState()
+      .fetchPullsForBranch(client({ ok: true, pulls: [pull], fetchedAt: 1, fromCache: false }), 'p1', 'g1', 'feat')
+    expect(useGitHubLinks.getState().pullSuggestions['p1:g1'].pulls).toEqual([pull])
+  })
+
+  it('records a refusal as an error, and a project-wide one also gates further asks', async () => {
+    await useGitHubLinks.getState()
+      .fetchPullsForBranch(client({ ok: false, reason: 'not-approved' }), 'p1', 'g1', 'feat')
+    expect(useGitHubLinks.getState().pullSuggestions['p1:g1'].error).toBe('not-approved')
+    expect(useGitHubLinks.getState().gate.p1.reason).toBe('not-approved')
+
+    await useGitHubLinks.getState()
+      .fetchPullsForBranch(client({ ok: true, pulls: [pull], fetchedAt: 1, fromCache: false }), 'p1', 'g2', 'feat')
+    expect(useGitHubLinks.getState().pullSuggestions['p1:g2']).toBeUndefined()
+  })
+
+  it('a rejected call leaves an error rather than throwing at the frame', async () => {
+    const failing = { pullsForBranch: async () => { throw new Error('offline') } } as unknown as GitHubIssuesApi
+    await useGitHubLinks.getState().fetchPullsForBranch(failing, 'p1', 'g1', 'feat')
+    expect(useGitHubLinks.getState().pullSuggestions['p1:g1'].error).toBe('failed')
+  })
+
+  it('dismissal is per frame and persisted', () => {
+    useGitHubLinks.getState().dismissSuggestion('p1', 'g1', 7)
+    expect(useGitHubLinks.getState().dismissed.has('p1:g1:7')).toBe(true)
+    expect(useGitHubLinks.getState().dismissed.has('p1:g2:7')).toBe(false)
+    expect(JSON.parse(localStorage.getItem('nodeterm.prSuggestDismissed')!)).toEqual(['p1:g1:7'])
   })
 })

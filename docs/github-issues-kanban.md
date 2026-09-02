@@ -66,6 +66,16 @@ The node then wears a `#123` chip (with `+n` when it carries several) on the can
 
 Links are stored on the node in `.nodeterm/project.json`, so they travel with the repository like the rest of the canvas, and are normalized as untrusted input on every read and write. There is no reverse indicator on the GitHub card yet: an issue does not know which sessions point at it.
 
+### Worktree frames suggest their pull request
+
+A group frame bound to a git worktree checks whether its branch has an open pull request, and offers it: *PR #123 open — Attach — ×*. **It suggests, it never adopts.** Nothing is linked until you click Attach; a wrong guess costs a dismissed prompt, not a wrong chip. Several open pull requests on one branch open the picker rather than choosing for you.
+
+The check runs when the frame is first shown and when its branch changes — never on a timer — and the host reuses one answer per branch for 5 minutes, so a canvas of frames costs at most one request per branch per window. Use **Check for pull request** in the frame's right-click menu to ask again immediately.
+
+Dismissals are machine-local and per frame: they live in this browser/app's storage, not in `.nodeterm/project.json`, and two frames on the same branch are asked separately because they are two pieces of work.
+
+SSH projects show nothing here: worktrees are not supported in them.
+
 Canvas chips hold no host subscription. A chip's state is refreshed when it is first painted and then at most every 5 minutes, plus whenever the board is opened.
 
 ## Refresh and cache
