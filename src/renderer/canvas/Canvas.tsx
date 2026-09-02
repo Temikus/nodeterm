@@ -9330,6 +9330,24 @@ export function Canvas() {
                 onClick: () => openWorktreeDialog(groupId)
               } as MenuItem
             ]),
+        // An explicit re-check for the frame's branch. The suggestion has no timer of its own, so
+        // this is how a pull request opened since the frame last looked becomes visible.
+        ...(githubRepository && !isSshProject && groupHasWorktree(groupId)
+          ? [
+              {
+                label: 'Check for pull request',
+                icon: <IconBranch />,
+                onClick: () => {
+                  const projectId = useProjects.getState().activeProjectId
+                  const node = nodesRef.current.find((n) => n.id === groupId)
+                  const branch = node?.data.worktree?.branch
+                  if (!projectId || !branch) return
+                  void useGitHubLinks.getState()
+                    .fetchPullsForBranch(api.githubIssues, projectId, groupId, branch, { force: true })
+                }
+              } as MenuItem
+            ]
+          : []),
         ...(githubRepository &&
         !isHidden('github-attach', useSettings.getState().settings.hiddenNodeMenuItems)
           ? [
@@ -9351,6 +9369,7 @@ export function Canvas() {
     },
     [
       githubRepository,
+      api,
       setNodesColor,
       ungroup,
       groupHasWorktree,

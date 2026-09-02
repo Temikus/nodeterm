@@ -4890,6 +4890,18 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   `(repository, number)` and memoizes API answers for a minute (the `refresh` floor's reasoning).
   The Omni board scopes a lane's chips with the `GitHubLinkProject` context, and the funnel takes
   that `projectId`: the active project's edit goes to React Flow, any other to the store.
+  **Worktree frames SUGGEST their open pull request, never adopt it** (phase 3b): a bound frame
+  reads `githubIssues.pullsForBranch({projectId, branch})` and offers "PR #n open · Attach · ×" —
+  the Attach click is an ordinary explicit link, and nothing is written before it. The host
+  composes the `head` as `<owner>:<branch>` from the APPROVED repository (never a caller-supplied
+  slug) and TTL-caches it per branch (`BRANCH_PULLS_TTL_MS` 5 min, coalesced, `force` skips the
+  TTL but still coalesces), because `/repos/{repo}/pulls` **ignores `since` and answers no useful
+  ETag** — the TTL is the entire rate story, and there is deliberately **no timer** on the frame:
+  one read on a visible mount, one per branch change, one per explicit "Check for pull request".
+  `pull.head` is populated ONLY where `lookup` enriches an item from that cache, so the poll's
+  snapshot stays exactly what it fetched. Dismissals are machine-local (`localStorage
+  nodeterm.prSuggestDismissed`) and keyed per FRAME, not per branch. `wtPath` is already
+  `undefined` on an SSH project, so an SSH frame fetches nothing.
   Per-column "+ New session" menus create agents/terminal/sticky nodes assigned to the column
   (assignment written UN-pruned — the fresh node isn't in the derived list yet). The column
   half-pill itself: (`components/kanban/ColumnPill.tsx`, `columnForNode` in lib/kanban; rendered
