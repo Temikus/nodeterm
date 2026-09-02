@@ -393,6 +393,14 @@ export interface CanvasNodeState {
   /** group-only: when bound, the git worktree this group works in. */
   worktree?: GroupWorktree
   /**
+   * The GitHub issues / pull requests the user explicitly attached to this node (issue #462).
+   * Git-shared CONTENT — the team shares which session works on which issue — and therefore
+   * hostile input on every load path (`sanitizeNodeGitHubLinks` in @shared/github-link, applied in
+   * BOTH directions). The repository is implicit (`kanban.github.repository`), so nothing here
+   * pins a slug; a link is never inferred, only made by a click.
+   */
+  github?: import('./github-issues').GitHubLink[]
+  /**
    * trigger-only: the schedule + payload + target this node represents (issue #493). Git-shared
    * CONTENT — deliberately, the team shares the definition — which is exactly why it is treated
    * as hostile on every load path (`sanitizeNodeTriggers` in core/workspace-files) and why the
