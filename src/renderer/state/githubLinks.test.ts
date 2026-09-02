@@ -33,7 +33,7 @@ function api(lookup: (number: number) => Promise<GitHubLookupResult>): {
   return {
     calls,
     api: {
-      lookup: async ({ number }) => { calls.push(number); return lookup(number) }
+      lookup: async ({ number }: { number: number }) => { calls.push(number); return lookup(number) }
     } as unknown as GitHubIssuesApi
   }
 }

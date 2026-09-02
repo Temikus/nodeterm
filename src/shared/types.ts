@@ -584,6 +584,12 @@ export interface BoardLogEvent {
      *  agent node so it files under that agent's card. Written BEFORE the read (fail-closed): a cookie
      *  read that happened but was not recorded is the one outcome this trace exists to prevent. */
     | 'agent-read-cookies'
+    /** A GitHub issue / pull request was explicitly attached to (or detached from) a node
+     *  (issue #462). `to` is the link's kind, `title` its `#n Title` at the time. Written at the
+     *  write site, like `card-created`: `boardLogDiff` diffs the kanban only and cannot see a
+     *  node-data change. */
+    | 'github-attached'
+    | 'github-detached'
   from?: string
   to?: string
   /** Column title for column-added/deleted; card title for card-created; outcome for agent-message. */

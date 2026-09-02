@@ -4,6 +4,7 @@ import {
   type GitHubLink,
   type GitHubLinkKind
 } from '@shared/github-issues'
+import type { ProjectKanban } from '@shared/types'
 import { pullCardState } from './githubPull'
 
 /** What a linked item currently is. `unknown` is its own answer: no card has been resolved yet,
@@ -94,4 +95,20 @@ export function parseLinkInput(text: string, repository: string | undefined): Pa
   const number = Number(digits[1])
   if (!Number.isSafeInteger(number) || number <= 0) return null
   return { number }
+}
+
+const REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/
+
+/**
+ * The repository every link on this board resolves against, or `undefined` when the project has
+ * none — which is also the whole "is GitHub configured here?" answer for the attach affordances.
+ *
+ * Deliberately NOT `core/github/config`'s `parseGitHubRepository`: that module imports
+ * `node:crypto` and cannot run in the renderer, and it also ACCEPTS a git URL. The stored value
+ * has already been normalised to `owner/repo` by the settings write path, so this is a shape
+ * check on a value we own, not a second parser.
+ */
+export function linkRepository(kanban: ProjectKanban | undefined): string | undefined {
+  const value = kanban?.github?.repository?.trim()
+  return value && REPOSITORY.test(value) ? value : undefined
 }
