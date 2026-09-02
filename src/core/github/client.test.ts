@@ -129,6 +129,43 @@ describe('GitHubIssuesClient', () => {
       .rejects.toMatchObject({ code: 'invalid-request' })
   })
 
+  it('asks for one branch\'s open pull requests, with no since and no conditional header', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    const client = new GitHubIssuesClient({
+      token: 'secret',
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} })
+        return response([{
+          number: 7, title: 'Ship it', draft: false, head: { ref: 'feat/x' },
+          updated_at: '2026-08-09T10:00:00Z', html_url: 'https://github.com/o/r/pull/7'
+        }])
+      }
+    })
+    const pulls = await client.listPullsByHead('o/r', 'o:feat/x', { perPage: 10 })
+    expect(calls[0].url).toBe(
+      'https://api.github.com/repos/o/r/pulls?head=o%3Afeat%2Fx&state=open&per_page=10'
+    )
+    expect(calls[0].url).not.toContain('since')
+    expect(new Headers(calls[0].init.headers).get('if-none-match')).toBeNull()
+    expect(pulls).toEqual([{
+      number: 7, title: 'Ship it', draft: false, head: 'feat/x',
+      updatedAt: '2026-08-09T10:00:00Z', htmlUrl: 'https://github.com/o/r/pull/7', state: 'open'
+    }])
+  })
+
+  it('refuses a malformed head and a malformed item', async () => {
+    const client = new GitHubIssuesClient({
+      token: 'secret',
+      fetch: async () => response([{ number: 7, title: 'x', head: {}, updated_at: 'x', html_url: 'x' }])
+    })
+    await expect(client.listPullsByHead('o/r', 'no-colon', { perPage: 10 }))
+      .rejects.toMatchObject({ code: 'invalid-request' })
+    await expect(client.listPullsByHead('o/r', 'o: spaced', { perPage: 10 }))
+      .rejects.toMatchObject({ code: 'invalid-request' })
+    await expect(client.listPullsByHead('o/r', 'o:feat/x', { perPage: 10 }))
+      .rejects.toMatchObject({ code: 'malformed-response' })
+  })
+
   it('distinguishes permissions from primary and secondary rate limits', async () => {
     const forbidden = new GitHubIssuesClient({
       token: 'secret', fetch: async () => response({ message: 'forbidden' }, { status: 403 })
