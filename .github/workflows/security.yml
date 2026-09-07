@@ -10,10 +10,13 @@ on:
   merge_group:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+  # No push:[main] trigger — the pull_request run already analysed this exact commit,
+  # and CodeQL takes ~144s per run. merge_group covers the queue, so nothing on main
+  # goes unchecked.
   schedule:
-    # Weekly re-scan so a newly-disclosed CVE in an unchanged dependency still surfaces.
+    # Weekly re-scan so a newly-disclosed CVE in an unchanged dependency still surfaces,
+    # and (for CodeQL) keeps a periodic main-branch baseline in the security tab now
+    # that main no longer gets a CodeQL run on every push.
     - cron: '17 4 * * 1'
 
 # Least privilege: only CodeQL needs security-events:write to upload results.
