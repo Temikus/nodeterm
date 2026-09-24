@@ -289,8 +289,8 @@ export class GitHubIssuesClient {
   /**
    * Open pull requests whose head is `<owner>:<branch>`.
    *
-   * No `since` and no ETag: `/pulls` IGNORES `since` (measured — a day-old `since` returns the
-   * same page as none), and this read is TTL-cached in the service instead, which is what bounds
+   * No `since`, and no ETag sent yet: `/pulls` IGNORES `since` (measured — a day-old `since`
+   * returns the same page as none), and this read is TTL-cached in the service instead, which bounds
    * it to one request per branch per window. `head` is composed host-side from the approved
    * repository's own owner, never from a caller-supplied slug.
    */

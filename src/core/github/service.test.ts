@@ -5,6 +5,7 @@ import path from 'node:path'
 import { GitHubIssueCache } from './cache'
 import { GitHubClientError } from './client'
 import {
+  BRANCH_PULLS_FORCE_FLOOR_MS,
   BRANCH_PULLS_TTL_MS,
   evictPullsToFit,
   FULL_REFRESH_MIN_INTERVAL_MS,
@@ -1170,6 +1171,24 @@ describe('GitHubIssueService pullsForBranch', () => {
     release()
     await both
     expect(client.pullHeads).toEqual(['o:feat/x'])
+  })
+
+  it('floors force: a repeated check inside the floor is answered from the cache', async () => {
+    const client = new FixtureClient([])
+    client.pullsByHead.set('o:feat/x', [pull(7, 'feat/x')])
+    let clock = 1_000
+    const service = build(client, () => clock)
+    await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x' })
+
+    clock += BRANCH_PULLS_FORCE_FLOOR_MS - 1
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x', force: true }))
+      .toMatchObject({ ok: true, fromCache: true })
+    expect(client.pullHeads).toHaveLength(1)
+
+    clock += 2
+    expect(await service.pullsForBranch({ projectId: 'project-1', branch: 'feat/x', force: true }))
+      .toMatchObject({ ok: true, fromCache: false })
+    expect(client.pullHeads).toHaveLength(2)
   })
 
   it('refuses a branch that could carry the head separator, and reports a rate limit as itself', async () => {

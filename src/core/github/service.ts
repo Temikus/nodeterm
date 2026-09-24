@@ -42,10 +42,13 @@ const POLL_MS = 60_000
 const LOOKUP_MEMO_TTL_MS = 60_000
 const LOOKUP_MEMO_MAX = 500
 
-/** How long one branch's open pull requests are reused. This TTL is the whole rate story for the
- *  worktree suggestion — the endpoint takes no `since` and answers no ETag — so a visible frame
- *  costs at most one request per branch per window. */
+/** How long one branch's open pull requests are reused. The endpoint takes no `since` and we do
+ *  not send ETags on it yet, so this TTL is what bounds the cost: a frame costs at most one request
+ *  per branch per window. */
 export const BRANCH_PULLS_TTL_MS = 5 * 60_000
+/** Floor under `force`: it skips the TTL, and it is reachable from a relay guest, so without this
+ *  a repeated "check again" is one API call per click. */
+export const BRANCH_PULLS_FORCE_FLOOR_MS = 30_000
 const BRANCH_PULLS_MAX = 200
 
 /** Floor between two caller-driven refreshes of one project, and the longer floor for a FULL
@@ -554,7 +557,7 @@ export class GitHubIssueService {
    * The owner is taken from the APPROVED repository host-side — a renderer supplies a branch and
    * nothing else. Results are TTL-cached and concurrent asks coalesce, so two frames on the same
    * branch cost one request; `force` (the frame's explicit "check again") skips the TTL but still
-   * joins an in-flight read.
+   * joins an in-flight read, and is floored at BRANCH_PULLS_FORCE_FLOOR_MS.
    */
   async pullsForBranch(request: {
     projectId: string
@@ -574,7 +577,8 @@ export class GitHubIssueService {
     }
     const key = `${captured.repository}\0${branch}`
     const cached = this.branchPulls.get(key)
-    if (cached && !request.force && this.now() - cached.at < BRANCH_PULLS_TTL_MS) {
+    const age = cached ? this.now() - cached.at : Infinity
+    if (age < (request.force ? BRANCH_PULLS_FORCE_FLOOR_MS : BRANCH_PULLS_TTL_MS) && cached) {
       return { ok: true, pulls: cached.pulls, fetchedAt: cached.at, fromCache: true }
     }
     const inFlight = this.branchPullsInFlight.get(key)
