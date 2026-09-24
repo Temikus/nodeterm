@@ -547,7 +547,7 @@ import { boardLogEvents } from '../lib/boardLogDiff'
 import { useBoardLog } from '../state/boardLog'
 import { isGlobalKanbanOpen, isKanbanOpen, isOmniKanbanEnabled, useViewMode, viewFor } from '../state/viewMode'
 import { GlobalKanbanView } from '../components/kanban/GlobalKanbanView'
-import { useGitHubLinks } from '../state/githubLinks'
+import { linkCard, useGitHubLinks } from '../state/githubLinks'
 import { setGitHubLinkHandler } from './githubLinkActions'
 import { GitHubLinkPicker } from '../components/github/GitHubLinkPicker'
 import { GitHubIssueSummaryModal } from '../components/kanban/GitHubIssueSummaryModal'
@@ -9069,8 +9069,12 @@ export function Canvas() {
                 ? [{
                     type: 'submenu',
                     label: 'Detach GitHub link',
+                    // The chip's own freshness story: the cached card's title when there is one.
                     children: links.map((link): MenuItem => ({
-                      label: linkToBoardTitle(link),
+                      label: linkToBoardTitle(
+                        link,
+                        linkCard(useProjects.getState().activeProjectId, link)
+                      ),
                       danger: true,
                       onClick: () => detachNodeLink(ids[0], link)
                     }))
