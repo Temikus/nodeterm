@@ -6,7 +6,7 @@ import { IPC } from '../shared/ipc'
 import { platform } from './platform'
 import {
   DEFAULT_PROJECT_ID, EMPTY_WORKSPACE,
-  type BridgeLink, type CanvasNodeState, type KanbanColumn, type KanbanLabel, type Project, type Workspace,
+  type BridgeLink, type CanvasNodeState, type KanbanColumn, type KanbanLabel, type Project, type Workspace, type WorkspaceSaveOptions,
   type WorkspaceV1
 } from '../shared/types'
 import {
@@ -206,7 +206,8 @@ export class WorkspaceStore {
 
   registerIpc(): void {
     platform().handle(IPC.workspaceLoad, () => this.load())
-    platform().handle(IPC.workspaceSave, (workspace: Workspace) => this.save(workspace))
+    platform().handle(IPC.workspaceSave, (workspace: Workspace, opts?: WorkspaceSaveOptions) =>
+      this.save(workspace, { localOnly: opts?.localOnly === true }))
     platform().handle(IPC.workspaceProbeFolder, (folder: string) => this.probeFolder(folder))
     platform().handle(IPC.workspaceProjectFileState, (cwd: unknown) =>
       typeof cwd === 'string' && cwd ? this.projectFileState(cwd) : 'unreadable')
@@ -933,13 +934,22 @@ export class WorkspaceStore {
    *  projects went blank after tab switching" wipe. */
   private saveChain: Promise<unknown> = Promise.resolve()
 
-  save(workspace: Workspace): Promise<void> {
-    const run = this.saveChain.then(() => this.saveNow(workspace))
+  /**
+   * `localOnly` makes the save durable on THIS machine only: every local file and the index (which
+   * carries each SSH project's cache) are written, but no SSH project is read, reconciled or
+   * mirrored — a changed, already-reconciled entry is marked `unmirrored` instead, so the next
+   * ordinary save pushes it. It exists for the launch write-ahead barrier (`commitLaunchAttempt`):
+   * that save must be on disk before a command is typed, and waiting on two SSH round trips per
+   * save made every new agent node on an SSH project sit on QUEUED for seconds. It still runs on
+   * the FIFO chain, so ordering against every other save is unchanged.
+   */
+  save(workspace: Workspace, opts: WorkspaceSaveOptions = {}): Promise<void> {
+    const run = this.saveChain.then(() => this.saveNow(workspace, opts.localOnly === true))
     this.saveChain = run.catch(() => {})
     return run
   }
 
-  private async saveNow(workspace: Workspace): Promise<void> {
+  private async saveNow(workspace: Workspace, localOnly = false): Promise<void> {
     if (!workspace.projects.length && !this.index) {
       // A store that never read the index may not replace a populated one with "no projects":
       // that is the boot-save wipe — load() failed transiently, the renderer hydrated zero
@@ -1070,6 +1080,12 @@ export class WorkspaceStore {
       // Without that record the re-read would hand every just-deleted node straight back on the very
       // write that was supposed to remove it, and no node on an ssh project could ever be closed.
       this.recordLocalDeletions(e.id, previousCache?.nodes, e.cache.nodes)
+      if (localOnly) {
+        // No network. An unreconciled entry is left for the next ordinary save to LOOK first (the
+        // never-blind-write rule is untouched); a reconciled one that changed now owes its mirror.
+        if (changedSinceLoad && this.reconciled.has(e.id)) this.unmirrored.add(e.id)
+        continue
+      }
       if (!this.reconciled.has(e.id)) {
         // Never blind-write a remote file we have not read yet: the first mirror of a fresh or
         // re-added project must LOOK first — an existing lineage on the server may win (adopted,

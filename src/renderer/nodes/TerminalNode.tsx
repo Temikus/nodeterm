@@ -1875,6 +1875,16 @@ export function TerminalNode({
   const observedLaunchDelivery = useLaunchDelivery((s) => s.byId[id])
   const launchDelivery = observedLaunchDelivery ?? (pendingLaunch?.manualOnly
     ? { kind: 'failed' as const, attempts: 1, at: 0 } : undefined)
+  // A node's own first-open launch is in flight: the live `initialCommand` alias is still set
+  // (it is cleared on every outcome) and nothing holds it. Its `pendingLaunch` is only the durable
+  // write-ahead record — and it carries `manualOnly` from the claim until Enter lands — so showing
+  // the chip here painted "⚠ QUEUED" on EVERY freshly opened agent for the length of its delivery.
+  // A real hold (deps, setup script) or a reported failure/stall still shows.
+  const firstOpenInFlight =
+    !!data.initialCommand &&
+    !observedLaunchDelivery &&
+    !(pendingLaunch?.after?.length) &&
+    !pendingLaunch?.awaitSetupGroup
   const pendingWaitingOn = [
     ...(pendingLaunch?.after ?? []).map(
       (depId) => ((getNode(depId) as CanvasNode | undefined)?.data.title as string) || depId
@@ -5595,7 +5605,7 @@ export function TerminalNode({
             that simply failed to start — and it carries the manual escape, because agent state is
             transient: after an app restart nothing will ever report `done` again, so without a
             "run now" an armed node left over from before the restart would be a dead end. */}
-        {pendingLaunch && (
+        {pendingLaunch && !firstOpenInFlight && (
           <span
             className={`term-node__status term-node__status--queued nodrag${
               launchDelivery ? ' term-node__status--queued-warn' : ''

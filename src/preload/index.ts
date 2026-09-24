@@ -17,6 +17,7 @@ import type {
   UpdateInfo,
   UpdateProgress,
   Workspace,
+  WorkspaceSaveOptions,
   WorkspaceMigrationKind
 } from '../shared/types'
 import type { ClientId, PeerDiff, PeerIdentity, PeerState } from '../shared/presence'
@@ -143,7 +144,7 @@ const api: NodeTerminalApi = {
   },
   workspace: {
     load: () => ipcRenderer.invoke(IPC.workspaceLoad),
-    save: (workspace: Workspace) => ipcRenderer.invoke(IPC.workspaceSave, workspace),
+    save: (workspace: Workspace, opts?: WorkspaceSaveOptions) => ipcRenderer.invoke(IPC.workspaceSave, workspace, opts),
     probeFolder: (folder: string) => ipcRenderer.invoke(IPC.workspaceProbeFolder, folder),
     projectFileState: (folder: string) => ipcRenderer.invoke(IPC.workspaceProjectFileState, folder),
     onMigrated: (cb: (kind: WorkspaceMigrationKind) => void) => {

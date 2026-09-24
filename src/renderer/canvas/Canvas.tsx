@@ -2871,8 +2871,11 @@ export function Canvas() {
         markDirty()
         commitActiveToStore()
       },
+      // Local durability is the whole barrier: a crash restarts from THIS machine's index, and the
+      // `markDirty` above already owes the SSH mirror to the next ordinary save. Awaiting the
+      // mirror here held every new agent on an SSH project on QUEUED for its round trips.
       save: async () => {
-        await api.workspace.save(useProjects.getState().toWorkspace())
+        await api.workspace.save(useProjects.getState().toWorkspace(), { localOnly: true })
       }
     })
   }), [activeSession.api, api, commitActiveToStore, markDirty, setNodes])
