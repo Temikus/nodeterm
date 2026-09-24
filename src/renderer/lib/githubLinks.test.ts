@@ -11,7 +11,8 @@ import {
   linkTooltip,
   parseLinkInput,
   removeLink,
-  suggestionFor
+  suggestionFor,
+  worktreeBranch
 } from './githubLinks'
 
 const card = (over: Partial<GitHubIssueCardView> = {}): GitHubIssueCardView => ({
@@ -46,6 +47,11 @@ describe('add / remove', () => {
     const links = [issue]
     expect(addLink(links, { ...issue, title: 'again' })).toBe(links)
     expect(hasLink(links, issue)).toBe(true)
+  })
+
+  it('clamps an over-long title, so the next save does not strip it', () => {
+    const [link] = addLink(undefined, { kind: 'pull', number: 3, title: 'x'.repeat(500) })
+    expect(link.title).toHaveLength(200)
   })
 
   it('refuses to grow past the per-node cap', () => {
@@ -149,5 +155,15 @@ describe('suggestionFor', () => {
   it('does not treat an ISSUE link as covering the pull request of the same number', () => {
     expect(suggestionFor([{ kind: 'issue', number: 7 }], [pull(7, '2026-08-09T00:00:00Z')], new Set()))
       .toHaveLength(1)
+  })
+})
+
+describe('worktreeBranch', () => {
+  it('prefers the observed branch, then the status read, then the binding', () => {
+    const wt = { branch: 'bound' }
+    expect(worktreeBranch('now', { branch: 'status' }, wt)).toBe('now')
+    expect(worktreeBranch(undefined, { branch: 'status' }, wt)).toBe('status')
+    expect(worktreeBranch('', { branch: '' }, wt)).toBe('bound')
+    expect(worktreeBranch(undefined, undefined, undefined)).toBeUndefined()
   })
 })

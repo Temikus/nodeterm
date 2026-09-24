@@ -1,4 +1,4 @@
-import type { GitHubLink } from '@shared/github-issues'
+import type { GitHubIssueCardView, GitHubLink } from '@shared/github-issues'
 import type { BoardLogEvent } from '@shared/types'
 
 /**
@@ -13,10 +13,21 @@ export interface GitHubLinkHandler {
   detach(nodeId: string, link: Pick<GitHubLink, 'kind' | 'number'>, projectId?: string): void
   /** Replace a node's links wholesale (the card metadata strip's ×). */
   set(nodeId: string, next: GitHubLink[] | undefined, event?: BoardLogEvent, projectId?: string): void
-  /** Open the picker anchored at a point, adding to `nodeId`. */
-  openPicker(nodeId: string, anchor: { x: number; y: number }, projectId?: string): void
+  /** Open the picker anchored at a point, adding to `nodeId`. `preset` rows show before anything
+   *  is typed (a worktree frame's own pull requests). */
+  openPicker(
+    nodeId: string,
+    anchor: { x: number; y: number },
+    projectId?: string,
+    options?: GitHubLinkPickerOptions
+  ): void
   /** Open the read-only summary for one link. */
   openDetails(link: GitHubLink, projectId?: string): void
+}
+
+export interface GitHubLinkPickerOptions {
+  preset?: GitHubIssueCardView[]
+  kindFilter?: 'issue' | 'pull'
 }
 
 let handler: GitHubLinkHandler | null = null
@@ -49,9 +60,10 @@ export function setGitHubLinks(
 export function openGitHubLinkPicker(
   nodeId: string,
   anchor: { x: number; y: number },
-  projectId?: string
+  projectId?: string,
+  options?: GitHubLinkPickerOptions
 ): void {
-  handler?.openPicker(nodeId, anchor, projectId)
+  handler?.openPicker(nodeId, anchor, projectId, options)
 }
 
 export function openGitHubLinkDetails(link: GitHubLink, projectId?: string): void {

@@ -4894,10 +4894,17 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   reads `githubIssues.pullsForBranch({projectId, branch})` and offers "PR #n open · Attach · ×" —
   the Attach click is an ordinary explicit link, and nothing is written before it. The host
   composes the `head` as `<owner>:<branch>` from the APPROVED repository (never a caller-supplied
-  slug) and TTL-caches it per branch (`BRANCH_PULLS_TTL_MS` 5 min, coalesced, `force` skips the
-  TTL but still coalesces), because `/repos/{repo}/pulls` **ignores `since` and answers no useful
-  ETag** — the TTL is the entire rate story, and there is deliberately **no timer** on the frame:
-  one read on a visible mount, one per branch change, one per explicit "Check for pull request".
+  slug) and TTL-caches it per branch (`BRANCH_PULLS_TTL_MS` 5 min, coalesced; `force` skips the
+  TTL but still coalesces and is floored at `BRANCH_PULLS_FORCE_FLOOR_MS`, since the channel is
+  relay-reachable). `/repos/{repo}/pulls` **ignores `since`** and we send no ETag on it yet, so the
+  TTL is what bounds the cost, and there is deliberately **no timer** on the frame: one read the
+  first time the frame's IntersectionObserver reports it on screen (`prVisible` starts false, so a
+  project load does not ask for off-screen frames), one per branch change, one per explicit "Check
+  for pull request". The frame, its label and that menu item read ONE branch source,
+  `worktreeBranch` (observed → status → binding): the frame drops an answer for any other branch.
+  Several candidates open the picker with them as its `preset` (`openPicker`'s options); the picker
+  keeps a preset while the query is empty. Fork-head pull requests never match (the head owner is
+  the approved repository's). A failed read shows "PR check failed · Retry" rather than nothing.
   `pull.head` is populated ONLY where `lookup` enriches an item from that cache, so the poll's
   snapshot stays exactly what it fetched. Dismissals are machine-local (`localStorage
   nodeterm.prSuggestDismissed`) and keyed per FRAME, not per branch. `wtPath` is already

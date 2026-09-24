@@ -67,6 +67,16 @@ export function GitHubLinkPicker({
   useEffect(() => {
     const run = generation.current + 1
     generation.current = run
+    // With a preset, an empty query shows the preset: an unfiltered search here would replace the
+    // branch's own pull requests with the repository's newest items one debounce after opening.
+    if (preset && !query.trim()) {
+      setBusy(false)
+      // Same-state bail-out: the effect re-runs on every dependency change, and a fresh object
+      // each time would re-render into it again.
+      setResults((prev) =>
+        prev.kind === 'items' && prev.items === preset ? prev : { kind: 'items', items: preset, partial: false })
+      return
+    }
     const parsed = parseLinkInput(query, repository)
     const timer = setTimeout(() => {
       setBusy(true)
@@ -93,7 +103,7 @@ export function GitHubLinkPicker({
         })
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [api, projectId, repository, query, kindFilter])
+  }, [api, projectId, repository, query, kindFilter, preset])
 
   const rows = useMemo(
     () => (results.kind === 'items' ? results.items : []),

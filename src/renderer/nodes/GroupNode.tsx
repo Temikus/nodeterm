@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Tooltip } from '../components/Tooltip'
 import { IconClose, IconUngroup } from '../components/icons'
 import { NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react'
@@ -12,9 +12,8 @@ import { useGitBranch } from '../state/gitBranches'
 import { useProjectSetup } from '../state/projectSetup'
 import { GitHubLinkChip } from '../components/github/GitHubLinkChip'
 import { useGitHubLinks, suggestionKey } from '../state/githubLinks'
-import { linkRepository, suggestionFor } from '../lib/githubLinks'
+import { branchPullCard, linkRepository, suggestionFor, worktreeBranch } from '../lib/githubLinks'
 import { attachGitHubLink, openGitHubLinkPicker } from '../canvas/githubLinkActions'
-import { SessionContext } from '../session/session'
 
 export type WorktreeAction = 'merge' | 'remove' | 'unbind' | 'rerun-setup'
 
@@ -122,13 +121,16 @@ export function GroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
               const next = entries[entries.length - 1]?.isIntersecting ?? true
               const entered = next && !onScreen
               onScreen = next
-              onScreenRef.current = next
+              setPrVisible(next)
               if (entered) poke()
             },
             { rootMargin: '200px' }
           )
         : null
     if (el && io) io.observe(el)
+    // No observer to ask (a pre-paint mount, a runtime without IntersectionObserver): visible, the
+    // same assumption the status poke makes.
+    else setPrVisible(true)
     return () => {
       clearInterval(t)
       document.removeEventListener('visibilitychange', poke)
@@ -141,25 +143,30 @@ export function GroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
   // request is a guess, and a wrong chip costs more than a dismissed prompt.
   //
   // `wtPath` is already undefined on an SSH project (see above), so an SSH frame fetches nothing.
-  // There is NO timer: one read on mount-visible and one per branch change, and the host's own
-  // 5-minute TTL absorbs the rest — a canvas of frames must not become a poll of its own.
-  // Read the context rather than `useSession()`: a frame is mountable without a provider (the
-  // node tests do exactly that), and no session simply means no suggestion to fetch.
-  const api = useContext(SessionContext)?.api
+  // There is NO timer: one read the first time the frame is on screen and one per branch change;
+  // the host's 5-minute TTL absorbs the rest. `prVisible` starts false and only the observer
+  // above sets it, so a project load does not ask for every off-screen frame.
   const projectId = useProjects((s) => s.activeProjectId)
   const githubRepository = useProjects((s) =>
     linkRepository(s.projects.find((p) => p.id === s.activeProjectId)?.kanban))
   const suggestions = useGitHubLinks((s) => s.pullSuggestions[`${projectId}:${id}`])
   const dismissed = useGitHubLinks((s) => s.dismissed)
-  const branch = status?.branch || wt?.branch
-  const onScreenRef = useRef(true)
+  const prBranch = worktreeBranch(branch, status, wt)
+  const [prVisible, setPrVisible] = useState(false)
+  const askedFor = useRef<string | null>(null)
   useEffect(() => {
-    if (!api || !wtPath || !branch || !githubRepository || !projectId) return
-    if (!onScreenRef.current || document.visibilityState === 'hidden') return
-    void useGitHubLinks.getState().fetchPullsForBranch(api.githubIssues, projectId, id, branch)
-  }, [api, projectId, id, wtPath, branch, githubRepository])
+    if (!wtPath || !prBranch || !githubRepository || !projectId) return
+    if (!prVisible || document.visibilityState === 'hidden') return
+    const ask = `${projectId}\0${githubRepository}\0${prBranch}`
+    if (askedFor.current === ask) return
+    askedFor.current = ask
+    void useGitHubLinks.getState().fetchPullsForBranch(api.githubIssues, projectId, id, prBranch)
+  }, [api, projectId, id, wtPath, prBranch, githubRepository, prVisible])
 
-  const candidates = suggestions && branch && suggestions.branch === branch
+  const suggestionShown = !!suggestions && !!prBranch && suggestions.branch === prBranch
+  const suggestionFailed = suggestionShown && !!suggestions.error &&
+    suggestions.error !== 'not-approved' && suggestions.error !== 'not-authenticated'
+  const candidates = suggestionShown
     ? suggestionFor(
         data.github,
         suggestions.pulls,
@@ -250,7 +257,7 @@ export function GroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
               <span className="group-node__branch" title={wt.path}>
                 {/* The branch git reports NOW wins: the user may have switched branches inside
                     the worktree from a terminal, and the persisted name would then be a lie. */}
-                ⎇ {branch || status?.branch || wt.branch}
+                ⎇ {prBranch}
                 {!!status && status.dirty > 0 && (
                   <em className="group-node__wt-dirty" title={`${status.dirty} changed file(s)`}>
                     {' '}
@@ -369,7 +376,10 @@ export function GroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
             }
             onClick={(event) => {
               if (candidates.length > 1) {
-                openGitHubLinkPicker(id, { x: event.clientX, y: event.clientY })
+                openGitHubLinkPicker(id, { x: event.clientX, y: event.clientY }, undefined, {
+                  preset: candidates.map(branchPullCard),
+                  kindFilter: 'pull'
+                })
                 return
               }
               attachGitHubLink(id, {
@@ -391,6 +401,24 @@ export function GroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
             }}
           >
             ×
+          </button>
+        </div>
+      )}
+
+      {suggestionFailed && candidates.length === 0 && (
+        <div className="group-node__pr-suggest nodrag">
+          <span title={`Could not ask GitHub about ${prBranch} (${suggestions.error})`}>
+            PR check failed
+          </span>
+          <button
+            className="group-node__wt-btn"
+            onClick={() => {
+              if (!projectId || !prBranch) return
+              void useGitHubLinks.getState()
+                .fetchPullsForBranch(api.githubIssues, projectId, id, prBranch, { force: true })
+            }}
+          >
+            Retry
           </button>
         </div>
       )}

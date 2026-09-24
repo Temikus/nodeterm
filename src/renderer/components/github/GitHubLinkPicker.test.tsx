@@ -144,8 +144,18 @@ describe('GitHubLinkPicker', () => {
     expect(onPick).toHaveBeenCalledWith({ kind: 'pull', number: 5, title: 'Item 5' })
   })
 
-  it('offers the preset candidates before anything is typed', () => {
-    render({ preset: [card(9)] })
+  it('keeps the preset candidates past the debounce until something is typed', async () => {
+    search.mockResolvedValue({ items: [card(4)], partial: false })
+    render({ preset: [card(9)], kindFilter: 'pull' })
+    await settle()
+    expect(search).not.toHaveBeenCalled()
+    expect(document.querySelector('.github-link-picker__title')?.textContent).toBe('Item 9')
+
+    await type('item')
+    expect(search).toHaveBeenLastCalledWith({ projectId: 'p1', search: 'item', limit: 20, kind: 'pull' })
+    expect(document.querySelector('.github-link-picker__title')?.textContent).toBe('Item 4')
+
+    await type('')
     expect(document.querySelector('.github-link-picker__title')?.textContent).toBe('Item 9')
   })
 })

@@ -70,9 +70,11 @@ Canvas chips hold no host subscription, so a chip that stays on screen is never 
 
 ### Worktree frames suggest their pull request
 
-A group frame bound to a git worktree checks whether its branch has an open pull request, and offers it: *PR #123 open — Attach — ×*. **It suggests, it never adopts.** Nothing is linked until you click Attach; a wrong guess costs a dismissed prompt, not a wrong chip. Several open pull requests on one branch open the picker rather than choosing for you.
+A group frame bound to a git worktree checks whether its branch has an open pull request, and offers it: *PR #123 open — Attach — ×*. **It suggests, it never adopts.** Nothing is linked until you click Attach; a wrong guess costs a dismissed prompt, not a wrong chip. Several open pull requests on one branch open the picker listing just those pull requests, rather than choosing for you.
 
-The check runs when the frame is first shown and when its branch changes — never on a timer — and the host reuses one answer per branch for 5 minutes, so a canvas of frames costs at most one request per branch per window. Use **Check for pull request** in the frame's right-click menu to ask again immediately.
+The check runs the first time the frame is on screen and when its branch changes — never on a timer — and the host reuses one answer per branch for 5 minutes, so a canvas of frames costs at most one request per branch per window. The branch asked about is the one the frame shows: if the worktree's checkout has moved off the bound branch, that is the branch that counts. Use **Check for pull request** in the frame's right-click menu to ask again (at most once every 30 seconds per branch). If GitHub could not be asked, the frame says *PR check failed* with a Retry button instead of showing nothing.
+
+Only pull requests whose head branch lives in the project's own repository are found. A pull request opened from a fork has a head owned by someone else, so it is never suggested; attach it by number instead.
 
 Dismissals are machine-local and per frame: they live in this browser/app's storage, not in `.nodeterm/project.json`, and two frames on the same branch are asked separately because they are two pieces of work.
 

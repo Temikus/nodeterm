@@ -1,4 +1,5 @@
 import {
+  GITHUB_LINK_TITLE_MAX,
   GITHUB_LINKS_PER_NODE_MAX,
   type GitHubIssueCardView,
   type GitHubLink,
@@ -27,7 +28,10 @@ export function hasLink(links: GitHubLink[] | undefined, link: Pick<GitHubLink, 
 export function addLink(links: GitHubLink[] | undefined, link: GitHubLink): GitHubLink[] {
   const current = links ?? []
   if (hasLink(current, link) || current.length >= GITHUB_LINKS_PER_NODE_MAX) return current
-  return [...current, link]
+  // Clamped here, not only in the picker: the sanitizer drops an over-long title on the next save,
+  // which would turn a chip that showed a title into a bare `#n`.
+  const title = link.title?.slice(0, GITHUB_LINK_TITLE_MAX)
+  return [...current, { kind: link.kind, number: link.number, ...(title ? { title } : {}) }]
 }
 
 /** Remove a link. `undefined` when nothing is left — the field is absent rather than `[]`, which
@@ -130,4 +134,37 @@ export function suggestionFor(
     .filter((pull) => !dismissed.has(pull.number) &&
       !hasLink(links, { kind: 'pull', number: pull.number }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number)
+}
+
+/** The branch a worktree frame is on: what git observed now, else the last status read, else the
+ *  binding. The frame's label, its suggestion and Canvas's "Check for pull request" all read this,
+ *  so a checkout that moved off the bound branch is asked about under the branch it shows. */
+export function worktreeBranch(
+  observed: string | undefined,
+  status: { branch?: string } | undefined,
+  worktree: { branch: string } | undefined
+): string | undefined {
+  return observed || status?.branch || worktree?.branch || undefined
+}
+
+/** A branch pull request as a picker row, so the frame can hand its candidates to the picker. */
+export function branchPullCard(pull: GitHubBranchPull): GitHubIssueCardView {
+  return {
+    id: pull.number,
+    number: pull.number,
+    title: pull.title,
+    body: '',
+    state: 'open',
+    stateReason: null,
+    htmlUrl: pull.htmlUrl,
+    apiUrl: '',
+    labels: [],
+    assignees: [],
+    createdAt: pull.updatedAt,
+    updatedAt: pull.updatedAt,
+    locked: false,
+    pull: { draft: pull.draft, mergedAt: null, head: pull.head },
+    columnId: null,
+    conflict: null
+  }
 }

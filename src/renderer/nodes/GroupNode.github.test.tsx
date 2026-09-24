@@ -16,10 +16,10 @@ vi.mock('@xyflow/react', () => ({
   useReactFlow: () => ({ updateNodeData: vi.fn(), setNodes: vi.fn() })
 }))
 
-const { pullsForBranch } = vi.hoisted(() => ({ pullsForBranch: vi.fn() }))
+const { pullsForBranch, gitStatus } = vi.hoisted(() => ({ pullsForBranch: vi.fn(), gitStatus: vi.fn() }))
 vi.mock('../session/session', async () => {
   const { createContext } = await import('react')
-  const api = { githubIssues: { pullsForBranch } }
+  const api = { githubIssues: { pullsForBranch }, git: { status: gitStatus } }
   return {
     SessionContext: createContext({ api }),
     useSession: () => ({ api }),
@@ -42,6 +42,27 @@ Object.defineProperty(globalThis, 'localStorage', {
     clear: () => store.clear()
   }
 })
+
+// jsdom has no IntersectionObserver. This one reports only when a test says the frame moved, so
+// "not on screen yet" is the state a frame mounts in, exactly as in the app.
+const observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = []
+class FakeIntersectionObserver {
+  constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+    observers.push(callback)
+  }
+  observe(): void {}
+  disconnect(): void {}
+}
+Object.defineProperty(globalThis, 'IntersectionObserver', {
+  configurable: true,
+  value: FakeIntersectionObserver
+})
+const onScreen = async (isIntersecting = true): Promise<void> => {
+  await act(async () => {
+    for (const callback of observers) callback([{ isIntersecting }])
+    await Promise.resolve()
+  })
+}
 
 const GROUP_ID = 'group-1'
 const pull = (number: number, over: Partial<GitHubBranchPull> = {}): GitHubBranchPull => ({
@@ -92,16 +113,25 @@ const render = (options: { worktree?: boolean; github?: GitHubLink[] } = {}): vo
 }
 
 const settle = async (): Promise<void> => { await act(async () => { await Promise.resolve() }) }
+/** Render and bring the frame on screen — the state every suggestion test starts from. */
+const show = async (options: Parameters<typeof render>[0] = {}): Promise<void> => {
+  render(options)
+  await onScreen()
+  await settle()
+}
 const row = (): HTMLElement | null => host.querySelector('.group-node__pr-suggest')
 
 beforeEach(() => {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
+  observers.length = 0
+  gitStatus.mockReset()
+  gitStatus.mockRejectedValue(new Error('no git in this test'))
   pullsForBranch.mockReset()
   pullsForBranch.mockResolvedValue({ ok: true, pulls: [pull(7)], fetchedAt: 1, fromCache: false })
   useGitHubLinks.setState({
-    cards: {}, pending: {}, missing: {}, gate: {}, pullSuggestions: {}, dismissed: new Set()
+    cards: {}, pending: {}, missing: {}, backoff: {}, gate: {}, pullSuggestions: {}, dismissed: new Set()
   })
   localStorage.clear()
   setProject({ repository: 'o/r' })
@@ -114,12 +144,19 @@ afterEach(() => {
 })
 
 describe('worktree frame pull-request suggestion', () => {
-  it('asks once on a visible mount, and not again on a timer', async () => {
+  it('asks nothing while off screen, then once when shown, and not again on a timer', async () => {
     vi.useFakeTimers()
     render()
     await settle()
+    expect(pullsForBranch).not.toHaveBeenCalled()
+
+    await onScreen()
+    await settle()
     expect(pullsForBranch).toHaveBeenCalledTimes(1)
     expect(pullsForBranch).toHaveBeenCalledWith({ projectId: 'p1', branch: 'feat' })
+
+    await onScreen(false)
+    await onScreen(true)
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000) })
     expect(pullsForBranch).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
@@ -127,36 +164,52 @@ describe('worktree frame pull-request suggestion', () => {
 
   it('renders the suggestion and writes NOTHING until Attach is clicked', async () => {
     const attach = vi.fn()
-    setGitHubLinkHandler({ attach, detach: vi.fn(), openPicker: vi.fn(), openDetails: vi.fn() })
-    render()
-    await settle()
+    setGitHubLinkHandler({ attach, detach: vi.fn(), set: vi.fn(), openPicker: vi.fn(), openDetails: vi.fn() })
+    await show()
     expect(row()?.textContent).toContain('PR #7 open')
     expect(attach).not.toHaveBeenCalled()
 
     const button = [...host.querySelectorAll('.group-node__pr-suggest button')]
       .find((b) => b.textContent === 'Attach')!
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(attach).toHaveBeenCalledWith(GROUP_ID, { kind: 'pull', number: 7, title: 'PR 7' })
+    expect(attach).toHaveBeenCalledWith(GROUP_ID, { kind: 'pull', number: 7, title: 'PR 7' }, undefined)
   })
 
   it('a draft says so, and several open PRs open the picker instead of guessing', async () => {
     const openPicker = vi.fn()
-    setGitHubLinkHandler({ attach: vi.fn(), detach: vi.fn(), openPicker, openDetails: vi.fn() })
+    setGitHubLinkHandler({ attach: vi.fn(), detach: vi.fn(), set: vi.fn(), openPicker, openDetails: vi.fn() })
     pullsForBranch.mockResolvedValue({
       ok: true, pulls: [pull(7), pull(8, { draft: true })], fetchedAt: 1, fromCache: false
     })
-    render()
-    await settle()
+    await show()
     expect(row()?.textContent).toContain('2 open PRs')
     const button = [...host.querySelectorAll('.group-node__pr-suggest button')]
       .find((b) => b.textContent === 'Attach')!
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(openPicker).toHaveBeenCalledWith(GROUP_ID, expect.any(Object))
+    expect(openPicker).toHaveBeenCalledTimes(1)
+    const [nodeId, , projectId, options] = openPicker.mock.calls[0]
+    expect(nodeId).toBe(GROUP_ID)
+    expect(projectId).toBeUndefined()
+    expect(options.kindFilter).toBe('pull')
+    expect(options.preset.map((card: { number: number; pull?: { draft: boolean } }) =>
+      [card.number, card.pull?.draft])).toEqual([[8, true], [7, false]])
+  })
+
+  it('says a failed check failed, and Retry asks again with force', async () => {
+    pullsForBranch.mockResolvedValueOnce({ ok: false, reason: 'failed' })
+    await show()
+    expect(row()?.textContent).toContain('PR check failed')
+
+    const retry = [...host.querySelectorAll('.group-node__pr-suggest button')]
+      .find((b) => b.textContent === 'Retry')!
+    act(() => retry.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await settle()
+    expect(pullsForBranch).toHaveBeenLastCalledWith({ projectId: 'p1', branch: 'feat', force: true })
+    expect(row()?.textContent).toContain('PR #7 open')
   })
 
   it('a dismissal survives a remount, and is remembered per frame', async () => {
-    render()
-    await settle()
+    await show()
     const dismiss = [...host.querySelectorAll('.group-node__pr-suggest button')]
       .find((b) => b.textContent === '×')!
     act(() => dismiss.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -166,27 +219,22 @@ describe('worktree frame pull-request suggestion', () => {
 
     act(() => root.unmount())
     root = createRoot(host)
-    render()
-    await settle()
+    await show()
     expect(row()).toBeNull()
   })
 
   it('hides a pull request the frame already links', async () => {
-    render({ github: [{ kind: 'pull', number: 7 }] })
-    await settle()
+    await show({ github: [{ kind: 'pull', number: 7 }] })
     expect(row()).toBeNull()
   })
 
   it('fetches nothing on an SSH project, or without a repository, or without a worktree', async () => {
     setProject({ repository: 'o/r', ssh: true })
-    render()
-    await settle()
+    await show()
     setProject({})
-    render()
-    await settle()
+    await show()
     setProject({ repository: 'o/r' })
-    render({ worktree: false })
-    await settle()
+    await show({ worktree: false })
     expect(pullsForBranch).not.toHaveBeenCalled()
   })
 })

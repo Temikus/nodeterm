@@ -557,8 +557,10 @@ import {
   linkKey,
   linkRepository,
   linkToBoardTitle,
-  removeLink
+  removeLink,
+  worktreeBranch
 } from '../lib/githubLinks'
+import { readGitBranch } from '../state/gitBranches'
 import { useFocusNode, FOCUS_SURFACE_ID } from '../state/focusNode'
 import { focusTargetId } from '../lib/focusTarget'
 import {
@@ -2892,8 +2894,14 @@ export function Canvas() {
       attach: attachNodeLink,
       detach: detachNodeLink,
       set: setNodeGitHubLinks,
-      openPicker: (nodeId, anchor, projectId) =>
-        setGithubPicker({ nodeId, anchor, ...(projectId ? { projectId } : {}) }),
+      openPicker: (nodeId, anchor, projectId, options) =>
+        setGithubPicker({
+          nodeId,
+          anchor,
+          ...(projectId ? { projectId } : {}),
+          ...(options?.preset ? { preset: options.preset } : {}),
+          ...(options?.kindFilter ? { kindFilter: options.kindFilter } : {})
+        }),
       openDetails: (link, projectId) => setGithubDetails({ link, ...(projectId ? { projectId } : {}) })
     })
     return () => setGitHubLinkHandler(null)
@@ -9339,8 +9347,15 @@ export function Canvas() {
                 icon: <IconBranch />,
                 onClick: () => {
                   const projectId = useProjects.getState().activeProjectId
-                  const node = nodesRef.current.find((n) => n.id === groupId)
-                  const branch = node?.data.worktree?.branch
+                  const wt = nodesRef.current.find((n) => n.id === groupId)?.data.worktree
+                  if (!wt) return
+                  // The branch the frame shows, not the binding: the frame drops an answer for
+                  // any other branch, so asking about the binding could change nothing.
+                  const branch = worktreeBranch(
+                    readGitBranch(api.git, wt.path),
+                    useWorktrees.getState().statusByPath[wt.path],
+                    wt
+                  )
                   if (!projectId || !branch) return
                   void useGitHubLinks.getState()
                     .fetchPullsForBranch(api.githubIssues, projectId, groupId, branch, { force: true })
