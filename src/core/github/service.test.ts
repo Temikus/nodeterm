@@ -957,7 +957,11 @@ describe('GitHubIssueService', () => {
 })
 
 describe('GitHubIssueService lookup / search (node links)', () => {
-  const seeded = async (client: FixtureClient, over: Partial<GitHubIssueServiceContext> = {}) => {
+  const seeded = async (
+    client: FixtureClient,
+    over: Partial<GitHubIssueServiceContext> = {},
+    now?: () => number
+  ) => {
     const cache = new GitHubIssueCache(userDataDir)
     await cache.bind('local-1', 'project-1', 'o/r', 'user-1')
     await cache.saveComplete('user-1', 'o/r', {
@@ -969,7 +973,8 @@ describe('GitHubIssueService lookup / search (node links)', () => {
     return new GitHubIssueService({
       cache,
       coordinator: new GitHubRequestCoordinator(),
-      contextForProject: async () => context(client, over)
+      contextForProject: async () => context(client, over),
+      ...(now ? { now } : {})
     })
   }
 
@@ -1009,6 +1014,42 @@ describe('GitHubIssueService lookup / search (node links)', () => {
       .toEqual({ ok: false, reason: 'not-found' })
     await service.lookup({ projectId: 'project-1', number: 77 })
     expect(client.lookups).toEqual([77])
+  })
+
+  it('single-flights concurrent lookups of one uncached number into one API call', async () => {
+    const client = new FixtureClient([issue(4)])
+    const service = await seeded(client)
+    client.issues.set(9, issue(9))
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => service.lookup({ projectId: 'project-1', number: 9 })))
+    expect(results.every((result) => result.ok && result.item.number === 9)).toBe(true)
+    expect(client.lookups).toEqual([9])
+  })
+
+  it('single-flights concurrent misses too, and the miss memo is in place when they settle', async () => {
+    const client = new FixtureClient([issue(4)])
+    const service = await seeded(client)
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => service.lookup({ projectId: 'project-1', number: 77 })))
+    expect(results).toEqual(Array(4).fill({ ok: false, reason: 'not-found' }))
+    expect(await service.lookup({ projectId: 'project-1', number: 77 }))
+      .toEqual({ ok: false, reason: 'not-found' })
+    expect(client.lookups).toEqual([77])
+  })
+
+  it('memoizes a found number briefly, then asks again', async () => {
+    let clock = 1_000_000
+    const client = new FixtureClient([issue(4)])
+    const service = await seeded(client, {}, () => clock)
+    client.issues.set(9, issue(9))
+    await service.lookup({ projectId: 'project-1', number: 9 })
+    const again = await service.lookup({ projectId: 'project-1', number: 9 })
+    expect(again).toMatchObject({ ok: true, source: 'api' })
+    expect(again.ok && again.item.number).toBe(9)
+    expect(client.lookups).toEqual([9])
+    clock += 61_000
+    await service.lookup({ projectId: 'project-1', number: 9 })
+    expect(client.lookups).toEqual([9, 9])
   })
 
   it('reports a host refusal as a typed value rather than throwing', async () => {

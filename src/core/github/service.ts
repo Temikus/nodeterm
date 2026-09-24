@@ -32,11 +32,13 @@ const MAX_CACHE_BYTES = 64 * 1024 * 1024
 const FULL_REFRESH_AGE = 24 * 60 * 60_000
 const POLL_MS = 60_000
 
-/** How long a `lookup` remembers that a number resolves to nothing, and how many such memories it
- *  keeps before dropping the lot. Short, because an issue can be created at that number a second
- *  later and the chip must then find it. */
-const LOOKUP_MISS_TTL_MS = 60_000
-const LOOKUP_MISS_MAX = 500
+/** How long a `lookup` remembers an API answer — a miss, or an item the snapshot does not carry —
+ *  and how many such memories it keeps before dropping the lot. `lookup` is reachable from the
+ *  renderer and a relay guest exactly like `refresh`, so it needs the same bound (see
+ *  REFRESH_MIN_INTERVAL_MS): without it an evicted pull or a number past the caps costs one API call
+ *  per ask, forever. Short, because an issue can be created at a missing number a second later. */
+const LOOKUP_MEMO_TTL_MS = 60_000
+const LOOKUP_MEMO_MAX = 500
 
 /** Floor between two caller-driven refreshes of one project, and the longer floor for a FULL
  *  reconciliation. `refresh` is reachable from the renderer AND — for a shared project — from a
@@ -213,7 +215,10 @@ export class GitHubIssueService {
   private readonly repositoryControls = new Map<string, RepositoryControl>()
   private readonly statePreparations = new Map<string, Set<Promise<RepositoryState>>>()
   private readonly refreshFloors = new Map<string, { any: number; full: number }>()
-  private readonly lookupMisses = new Map<string, number>()
+  /** `item: null` = a remembered 404. Keyed `${repository}\0${number}`, never by project. */
+  private readonly lookupMemo = new Map<string, { until: number; item: GitHubIssue | null }>()
+  /** One API read per key in flight; concurrent chips on one number share it. */
+  private readonly lookupFlights = new Map<string, Promise<GitHubIssue>>()
   private operationSequence = 0
   private readonly now: () => number
   private readonly schedule: NonNullable<ServiceOptions['setInterval']>
@@ -461,12 +466,18 @@ export class GitHubIssueService {
         return { ok: true, source: 'cache', item: { ...cached, ...mapping(cached, context.config) } }
       }
       const memoKey = `${context.repository}\0${request.number}`
-      const memo = this.lookupMisses.get(memoKey)
-      if (memo !== undefined && memo > this.now()) return { ok: false, reason: 'not-found' }
+      const memo = this.lookupMemo.get(memoKey)
+      if (memo && memo.until > this.now()) {
+        return memo.item
+          ? { ok: true, source: 'api', item: { ...memo.item, ...mapping(memo.item, context.config) } }
+          : { ok: false, reason: 'not-found' }
+      }
       const captured = await this.options.contextForProject(request.projectId)
       const capturedEpoch = epoch(captured)
-      const item = await this.readWithEpoch(captured, () =>
-        captured.client.getIssueOrPull(captured.repository, request.number))
+      // Keyed by the CAPTURED repository: the read goes there, so that is what its answer is about.
+      const item = await this.lookupOnce(`${captured.repository}\0${request.number}`, () =>
+        this.readWithEpoch(captured, () =>
+          captured.client.getIssueOrPull(captured.repository, request.number)))
       if (capturedEpoch !== epoch(await this.options.contextForProject(request.projectId))) {
         return { ok: false, reason: 'configuration-changed' }
       }
@@ -475,9 +486,6 @@ export class GitHubIssueService {
       if (error instanceof ConfigurationChangedError) return { ok: false, reason: 'configuration-changed' }
       if (error instanceof GitHubHostError) return { ok: false, reason: hostReason(error) }
       if (error instanceof GitHubClientError && error.code === 'not-found') {
-        // Remembered briefly so a canvas full of chips pointing at a deleted issue does not
-        // re-ask the API once per chip per mount.
-        this.rememberLookupMiss(request.projectId, request.number)
         return { ok: false, reason: 'not-found' }
       }
       return {
@@ -488,11 +496,29 @@ export class GitHubIssueService {
     }
   }
 
-  private rememberLookupMiss(projectId: string, number: number): void {
-    void this.cacheContext(projectId).then((context) => {
-      if (this.lookupMisses.size > LOOKUP_MISS_MAX) this.lookupMisses.clear()
-      this.lookupMisses.set(`${context.repository}\0${number}`, this.now() + LOOKUP_MISS_TTL_MS)
-    }).catch(() => undefined)
+  /** Single-flight + memo for `lookup`'s API leg. The memo is written INSIDE the flight, before
+   *  any caller resumes, so a lookup that starts after one settles always sees it. Each caller maps
+   *  the shared raw item through its own project's config. */
+  private lookupOnce(key: string, read: () => Promise<GitHubIssue>): Promise<GitHubIssue> {
+    const flying = this.lookupFlights.get(key)
+    if (flying) return flying
+    const remember = (item: GitHubIssue | null): void => {
+      if (this.lookupMemo.size >= LOOKUP_MEMO_MAX) this.lookupMemo.clear()
+      this.lookupMemo.set(key, { until: this.now() + LOOKUP_MEMO_TTL_MS, item })
+    }
+    const flight = read().then(
+      (item) => { remember(item); return item },
+      (error: unknown) => {
+        if (error instanceof GitHubClientError && error.code === 'not-found') remember(null)
+        throw error
+      }
+    )
+    this.lookupFlights.set(key, flight)
+    void flight.then(
+      () => { if (this.lookupFlights.get(key) === flight) this.lookupFlights.delete(key) },
+      () => { if (this.lookupFlights.get(key) === flight) this.lookupFlights.delete(key) }
+    )
+    return flight
   }
 
   moveIssue(request: {
