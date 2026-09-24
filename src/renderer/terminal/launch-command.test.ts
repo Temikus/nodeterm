@@ -1,7 +1,7 @@
 import { commitLaunchAttempt } from './launch-attempt'
 import type { PendingLaunch } from '@shared/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createLaunchWriter, deliverInitialLaunch, launchCommand, registerLaunchWriter } from './launch-command'
+import { createLaunchWriter, deliverInitialLaunch, launchCommand, registerLaunchWriter, trustsFreshShell } from './launch-command'
 import { KILL_LINE, WINDOWS_KILL_LINE, VERIFY_TIMEOUT_MS, DELIVERY_ATTEMPTS } from './command-delivery'
 
 function fixture(attempted = false, killLine = KILL_LINE) {
@@ -237,4 +237,22 @@ it('a pre-input deferred claim preserves UI intent and the same parked writer ca
   expect(await resumed).toBe('submitted')
   expect(await writer('claude brief', false)).toBe('submitted')
   expect(write.mock.calls).toEqual([['claude brief'], ['\r']])
+})
+
+describe('trustsFreshShell', () => {
+  const auto = { manual: false, fresh: true }
+  it('trusts a fresh plain shell and a fresh session-host shell', () => {
+    expect(trustsFreshShell({ ...auto, persistent: false })).toBe(true)
+    expect(trustsFreshShell({ ...auto, persistent: true, sessionHost: true })).toBe(true)
+  })
+  it('still probes a fresh tmux pane, and an older core that does not say', () => {
+    expect(trustsFreshShell({ ...auto, persistent: true })).toBe(false)
+    expect(trustsFreshShell({ ...auto })).toBe(false)
+  })
+  it('never trusts a manual delivery or a warm attach', () => {
+    expect(trustsFreshShell({ manual: true, fresh: true, persistent: false })).toBe(false)
+    expect(trustsFreshShell({ manual: true, fresh: true, sessionHost: true })).toBe(false)
+    expect(trustsFreshShell({ manual: false, fresh: false, persistent: false })).toBe(false)
+    expect(trustsFreshShell({ manual: false, fresh: false, sessionHost: true })).toBe(false)
+  })
 })

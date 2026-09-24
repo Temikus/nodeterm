@@ -13,14 +13,8 @@ describe('Windows persistent-session integration', () => {
     expect(manager).toContain("sessionHostSupported() ? 'session-host' : null")
   })
 
-  it('preserves the inherited Windows Path when prepending the Codex launcher', () => {
-    expect(manager).toContain("env.PATH ?? env.Path ?? ''")
-  })
-
-  it('delivers a fresh launch without probing a session-host pane first', () => {
-    expect(terminal).toContain(
-      '(!manual && fresh) || isLaunchShell(await queryPaneWithin(() => api.pty.paneCommand(id), RESTART_EXIT_TIMEOUT_MS))'
-    )
-    expect(terminal).not.toContain('fresh && !sessionPersistent) || isLaunchShell(')
+  it('prepends the Codex launcher onto the PATH key the environment already uses', () => {
+    expect(manager).toContain('const pathKey = envPathKey(env)')
+    expect(manager).not.toContain("env.PATH ?? env.Path")
   })
 })
