@@ -4,7 +4,13 @@ import type {
   GitHubIssuesApi,
   GitHubLookupResult
 } from '@shared/github-issues'
-import { LINK_CARD_TTL_MS, LINK_RETRY_MS, linkCard, useGitHubLinks } from './githubLinks'
+import {
+  LINK_CARD_TTL_MS,
+  LINK_FAILURE_BACKOFF_MS,
+  LINK_RETRY_MS,
+  linkCard,
+  useGitHubLinks
+} from './githubLinks'
 
 const card = (number: number, over: Partial<GitHubIssueCardView> = {}): GitHubIssueCardView => ({
   id: number,
@@ -40,7 +46,7 @@ function api(lookup: (number: number) => Promise<GitHubLookupResult>): {
 
 beforeEach(() => {
   vi.useRealTimers()
-  useGitHubLinks.setState({ cards: {}, pending: {}, missing: {}, gate: {} })
+  useGitHubLinks.setState({ cards: {}, pending: {}, missing: {}, backoff: {}, gate: {} })
 })
 
 describe('ensureCard', () => {
@@ -107,6 +113,42 @@ describe('ensureCard', () => {
     expect(calls).toEqual([12, 12])
   })
 
+  it('records a miss under the ASKED key when the number is the other kind', async () => {
+    const { api: client, calls } = api(async (number) => ({
+      ok: true, source: 'api', item: card(number, { pull: { draft: false, mergedAt: null } })
+    }))
+    const link = { kind: 'issue' as const, number: 12 }
+    await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+    await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+    expect(calls).toEqual([12])
+    expect(useGitHubLinks.getState().missing.p1['issue#12']).toBeGreaterThan(0)
+  })
+
+  it.each(['failed', 'configuration-changed'] as const)(
+    'backs off after a %s answer instead of re-asking on the next mount',
+    async (reason) => {
+      const { api: client, calls } = api(async () => ({ ok: false, reason }))
+      const link = { kind: 'issue' as const, number: 12 }
+      await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+      await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+      expect(calls).toEqual([12])
+
+      useGitHubLinks.setState((s) => ({
+        backoff: { ...s.backoff, p1: { 'issue#12': Date.now() - LINK_FAILURE_BACKOFF_MS - 1 } }
+      }))
+      await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+      expect(calls).toEqual([12, 12])
+    }
+  )
+
+  it('a remount while offline does not re-issue the lookup within the back-off', async () => {
+    const { api: client, calls } = api(async () => { throw new Error('offline') })
+    const link = { kind: 'issue' as const, number: 12 }
+    await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+    await useGitHubLinks.getState().ensureCard(client, 'p1', link)
+    expect(calls).toEqual([12])
+  })
+
   it('leaves nothing pending when the lookup itself rejects', async () => {
     const { api: client } = api(async () => { throw new Error('offline') })
     await useGitHubLinks.getState().ensureCard(client, 'p1', { kind: 'issue', number: 12 })
@@ -127,8 +169,15 @@ describe('seedFromPages / invalidate', () => {
     useGitHubLinks.getState().seedFromPages('p1', [
       { items: [card(1), card(2)], counts: {}, partial: false, readOnly: false }
     ])
+    useGitHubLinks.setState((s) => ({
+      pending: { ...s.pending, p1: { 'issue#1': true } },
+      backoff: { ...s.backoff, p1: { 'issue#1': Date.now(), 'issue#2': Date.now() } }
+    }))
     useGitHubLinks.getState().invalidate('p1', [1])
     expect(linkCard('p1', { kind: 'issue', number: 1 })).toBeUndefined()
+    expect(useGitHubLinks.getState().pending.p1['issue#1']).toBeUndefined()
+    expect(useGitHubLinks.getState().backoff.p1['issue#1']).toBeUndefined()
+    expect(useGitHubLinks.getState().backoff.p1['issue#2']).toBeGreaterThan(0)
     expect(linkCard('p1', { kind: 'issue', number: 2 })?.number).toBe(2)
 
     useGitHubLinks.setState((s) => ({ gate: { ...s.gate, p1: { reason: 'not-approved', at: Date.now() } } }))

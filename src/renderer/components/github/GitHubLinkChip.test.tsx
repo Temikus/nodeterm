@@ -66,7 +66,7 @@ beforeEach(() => {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  useGitHubLinks.setState({ cards: {}, pending: {}, missing: {}, gate: {} })
+  useGitHubLinks.setState({ cards: {}, pending: {}, missing: {}, backoff: {}, gate: {} })
   withRepository('o/r')
 })
 
