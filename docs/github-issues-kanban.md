@@ -66,7 +66,7 @@ The node then wears a `#123` chip (with `+n` when it carries several) on the can
 
 Links are stored on the node in `.nodeterm/project.json`, so they travel with the repository like the rest of the canvas, and are normalized as untrusted input on every read and write. There is no reverse indicator on the GitHub card yet: an issue does not know which sessions point at it.
 
-Canvas chips hold no host subscription. A chip's state is refreshed when it is first painted and then at most every 5 minutes, plus whenever the board is opened.
+Canvas chips hold no host subscription, so a chip that stays on screen is never refreshed. A chip looks its item up when it is painted, reusing an answer less than 5 minutes old instead of asking again. Opening the board repaints every chip with what the board loaded.
 
 ## Refresh and cache
 

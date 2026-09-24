@@ -4883,9 +4883,13 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   `github-attached` / `github-detached` event, which `boardLogDiff` cannot emit because it diffs
   the KANBAN only), reached from every surface through the module bridge
   `canvas/githubLinkActions.ts` — the same indirection `setWorktreeActionHandler` uses. Canvas
-  chips hold NO host subscription (the board's is ref-counted), so freshness is bounded by
-  `state/githubLinks.ts`'s 5-minute lookup TTL plus whatever the last board load seeded; its
-  per-project `gate` is what stops a dozen chips re-asking an unanswerable question.
+  chips hold NO host subscription (the board's is ref-counted) and do NOT refresh while mounted:
+  `state/githubLinks.ts`'s 5-minute TTL only gates the NEXT `ensureCard` (a mount), and a board
+  load re-seeds the store. Its per-project `gate`, per-link `missing` and transient-failure
+  `backoff` are what stop a dozen chips re-asking; host-side, `lookup` single-flights per
+  `(repository, number)` and memoizes API answers for a minute (the `refresh` floor's reasoning).
+  The Omni board scopes a lane's chips with the `GitHubLinkProject` context, and the funnel takes
+  that `projectId`: the active project's edit goes to React Flow, any other to the store.
   Per-column "+ New session" menus create agents/terminal/sticky nodes assigned to the column
   (assignment written UN-pruned — the fresh node isn't in the derived list yet). The column
   half-pill itself: (`components/kanban/ColumnPill.tsx`, `columnForNode` in lib/kanban; rendered
