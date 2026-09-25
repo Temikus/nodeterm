@@ -4748,9 +4748,18 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   cards edit their text in the modal (live both ways).
   The modal header carries the terminal node's actions (search via `useTerminalSearch`+
   `FindBar` on the modal xterm; dictate via the same `nodeterm:dictate` event — `.dictation`
-  overlay z is 60, ABOVE the modal scrim; ✦ `pty.generateName` through the modal rename funnel).
+  overlay z is 60, ABOVE the modal scrim; ✦ `pty.generateName` through the modal rename funnel;
+  and the **⌘M view** — a header toggle (`IconMarkdown`) plus the chord, which lays the SAME face
+  the canvas node shows over the live viewer: `ChatPanel` when `canChat(created agent)` and the
+  session id is known, else `TerminalMarkdownView`. Three rules: the state is MODAL-LOCAL, keyed by
+  node id (never `data.mdMode` — that would flip the canvas node under the board too); the viewer
+  stays MOUNTED underneath (covered, not swapped, so its co-attach never detaches/re-attaches) and
+  gets the same focus hand-off as the node (`ModalTerminal`'s `covered` → `useMdModeFocus`); and the
+  chord reaches the modal through `window.nodeTerminal.onMarkdownToggle` only while it is the top
+  dialog, while the canvas node's own subscription refuses the chord whenever a board is up — a
+  hover flag can go stale under the opaque board, so one press could otherwise flip both).
   **The 💬 icon means COMMENTS on both surfaces** (repurposed from the markdown view — ⌘M still
-  toggles markdown/chat on the canvas node): on a terminal node it opens a right-side comments
+  toggles markdown/chat on the canvas node, and on the card modal): on a terminal node it opens a right-side comments
   flyout (`.term-node__comments`, a sibling of the overflow:hidden root, hosting BoardLogPanel
   with `card: Pick<KanbanSession,'id'>`); in the modal it collapses/reopens the panel, which is
   OPEN BY DEFAULT there. Under the modal header sits the **card metadata strip** (`CardMetaBar.tsx`): Members (assign) —

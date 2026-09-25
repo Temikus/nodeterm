@@ -2995,6 +2995,13 @@ body,
   color: var(--muted);
 }
 
+/* The kanban card modal lays the same ⌘M face over its live viewer (the pane anchors it). Above
+   the viewer's own floating bits (FindBar, copy pill, upload note), which share that pane. */
+.kanban-modal__pane > .term-md,
+.kanban-modal__pane > .term-chat {
+  z-index: 20;
+}
+
 .term-md__content {
   flex: 1;
   min-height: 0;

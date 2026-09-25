@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { isTopDialog, nextDialogId, popDialog, pushDialog } from '../dialog-stack'
 import {
   IconChat,
   IconClose,
   IconExternal,
+  IconMarkdown,
   IconMaximize,
   IconMic,
   IconRestoreSize,
@@ -43,6 +44,15 @@ import { BrowserSurface } from '../../nodes/BrowserSurface'
 import { BrowserDrivingIndicator } from '../../nodes/BrowserDrivingChip'
 import { NoteMarkdown } from '../NoteMarkdown'
 import { relativeTime } from '../../lib/relativeTime'
+import { TerminalMarkdownView } from '../../nodes/TerminalMarkdownView'
+import { canChat } from '@shared/agents/config'
+import { effectiveAccountId } from '../../lib/accountChip'
+import { useSettings } from '../../state/settings'
+import { chipFor, commandTooltip } from '../../lib/keybindingOverrides'
+
+// Code-split exactly like the canvas node's: ChatPanel carries the markdown renderer, and the
+// card modal must not pull it onto the board's first paint.
+const ChatPanel = lazy(() => import('../../nodes/ChatPanel').then((m) => ({ default: m.ChatPanel })))
 
 interface CardModalProps {
   session: KanbanSession
@@ -66,7 +76,8 @@ interface CardModalProps {
 
 /** Trello-style card popup over the board. Scrim click / Esc close it; the board (and the
  *  canvas under it) stay mounted. Terminal cards carry the node header's actions too:
- *  search / dictate / AI-name / markdown view (the node itself is hidden under the board). */
+ *  search / dictate / AI-name / the ⌘M view — ChatPanel or the output markdown, the same face the
+ *  canvas node shows (the node itself is hidden under the board). */
 export function CardModal({ session, columnTitle, board, onChangeBoard, onClose, onOpenCanvas, onRename, onEditSticky, onBrowserNav, onSetIcon }: CardModalProps) {
   const { api } = useSession()
   const idRef = useRef<string>()
@@ -93,6 +104,34 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
   const togglePanel = useCardPanel((s) => s.toggle)
   const isTerminal = session.kind === 'terminal'
   const isBrowser = session.kind === 'browser'
+
+  // ── The ⌘M view (board parity with the canvas node's markdown / chat face) ─────────────────
+  // MODAL-LOCAL on purpose, never `data.mdMode`: flipping the node's flag would also flip the
+  // canvas node under the board. Keyed by node id (this component is not remounted per card, so
+  // a bare boolean would carry the open view onto the next card the user opens).
+  const [mdFor, setMdFor] = useState<string | null>(null)
+  const mdOpen = isTerminal && mdFor === session.id
+  const toggleMd = useCallback(() => {
+    setMdFor((cur) => (cur === session.id ? null : session.id))
+    setSearchOpen(false) // the FindBar searches the xterm the view now covers
+  }, [session.id])
+  // Same decision the node makes (TerminalNode: `showChat` / `useChat`): the CREATED agent picks
+  // the reader, ChatPanel only once the session id is known, else the output view.
+  const createdAgent = session.agentId ?? session.spawn.agentId
+  const claudeAccounts = useSettings((s) => s.settings.claudeAccounts)
+  const accountForReads = effectiveAccountId(session.spawn.accountId, observedAccount, claudeAccounts)
+  const useChat = mdOpen && !!createdAgent && canChat(createdAgent) && !!agentSessionId
+  const captureFull = useCallback((nodeId: string) => api.pty.capture(nodeId, true), [api])
+  const mdChip = chipFor('node.toggleMarkdown')
+  // The chord (main-intercepted on desktop, bridged in the browser) toggles THIS view while the
+  // modal is the top dialog. The canvas node under the board refuses the same chord while a board
+  // is up (TerminalNode), so one press can never flip both.
+  useEffect(() => {
+    if (!isTerminal) return
+    return window.nodeTerminal.onMarkdownToggle(() => {
+      if (isTopDialog(id)) toggleMd()
+    })
+  }, [id, isTerminal, toggleMd])
 
   // ── Resizable / maximizable sheet (issue #389) ──────────────────────────────────────────────
   // The sheet stays CENTRED; resize is symmetric about the centre, so every edge/corner handle
@@ -331,8 +370,19 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
               <ContextMeter sessionId={agentSessionId ?? null} nodeId={session.id} remote={isRemoteSessionNode(session.spawn)} agentId={session.agentId ?? session.spawn.agentId ?? observedAgentId} />
               <button
                 className="kanban-modal__action"
-                title="Search this terminal"
+                title={commandTooltip(mdOpen ? 'Back to the live terminal' : 'Markdown / chat view', 'node.toggleMarkdown')}
+                aria-label="Markdown view"
+                aria-pressed={mdOpen}
+                onClick={toggleMd}
+              >
+                <IconMarkdown />
+              </button>
+              <button
+                className="kanban-modal__action"
+                title={mdOpen ? 'Search works on the live terminal — leave the markdown view first' : 'Search this terminal'}
+                aria-label="Search this terminal"
                 aria-pressed={searchOpen}
+                disabled={mdOpen}
                 onClick={() => setSearchOpen((v) => !v)}
               >
                 <IconSearch />
@@ -444,13 +494,39 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
                 {session.kind === 'terminal' ? (
                   // A live SECOND client on the node's session — keyed by node id so switching cards
                   // remounts a fresh viewer.
-                  <ModalTerminal
-                    key={session.id}
-                    nodeId={session.id}
-                    spawn={session.spawn}
-                    searchOpen={searchOpen}
-                    onCloseSearch={() => setSearchOpen(false)}
-                  />
+                  <>
+                    <ModalTerminal
+                      key={session.id}
+                      nodeId={session.id}
+                      spawn={session.spawn}
+                      searchOpen={searchOpen}
+                      onCloseSearch={() => setSearchOpen(false)}
+                      covered={mdOpen}
+                    />
+                    {/* The ⌘M face is laid OVER the live viewer (the pane anchors it), never swapped
+                        in for it: ModalTerminal stays mounted, so its co-attach does not detach and
+                        re-attach — and its grid does not resize — every time the view flips. */}
+                    {mdOpen &&
+                      (useChat ? (
+                        <Suspense fallback={null}>
+                          <ChatPanel
+                            key={session.id}
+                            nodeId={session.id}
+                            sessionId={agentSessionId}
+                            cwd={session.spawn.cwd}
+                            accountId={accountForReads}
+                            agentId={createdAgent!}
+                          />
+                        </Suspense>
+                      ) : (
+                        <TerminalMarkdownView
+                          key={session.id}
+                          nodeId={session.id}
+                          capture={captureFull}
+                          hint={mdChip ? `${mdChip} to exit` : 'Exit'}
+                        />
+                      ))}
+                  </>
                 ) : isBrowser ? (
                   // A live browser webview seeded with the node's URL; navigation persists back to
                   // the node (the canvas node picks it up on its next mount).

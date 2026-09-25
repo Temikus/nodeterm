@@ -161,4 +161,12 @@ describe('focusXtermUnlessCovered', () => {
     expect(src).not.toMatch(/termRef\.current\?\.focus\(\)/)
     expect(src.match(/focusXtermUnlessCovered\(termRef\.current, mdModeRef\.current\)/g)?.length).toBe(2)
   })
+
+  it('the kanban card modal viewer uses the same hand-off (blur when covered, no attach-time focus)', () => {
+    // Source pin, same reason: ModalTerminal attaches asynchronously and focuses on completion,
+    // which a quick ⌘M in the card modal can precede — that focus must ask about the cover too.
+    const src = readFileSync(resolve(__dirname, '../components/kanban/ModalTerminal.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    expect(src).toMatch(/useMdModeFocus\(covered,/)
+    expect(src).toMatch(/focusXtermUnlessCovered\(term, coveredRef\.current\)/)
+  })
 })

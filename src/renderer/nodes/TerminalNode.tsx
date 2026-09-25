@@ -5278,10 +5278,15 @@ export function TerminalNode({
     }
   }, [id, canReadTitleNode, status?.sessionId, data.titleAuto, updateNodeData])
 
-  // Cmd/Ctrl+M toggles markdown view of this terminal's output (only when hovered).
+  // Cmd/Ctrl+M toggles markdown view of this terminal's output (only when hovered). NOT while a
+  // board covers the canvas: the kanban card modal owns the chord then (its own ⌘M view), and a
+  // hover flag can be stale under the opaque board — the pointer never "left" a node that was
+  // covered while hovered, so one press would flip the hidden node AND the modal.
   useEffect(() => {
     return window.nodeTerminal.onMarkdownToggle(() => {
-      if (hoveredRef.current) updateNodeData(id, (n) => ({ mdMode: !n.data.mdMode }))
+      if (!hoveredRef.current) return
+      if (isGlobalKanbanOpen() || isKanbanOpen(useProjects.getState().activeProjectId ?? '')) return
+      updateNodeData(id, (n) => ({ mdMode: !n.data.mdMode }))
     })
   }, [id, updateNodeData])
 
