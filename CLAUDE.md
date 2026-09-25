@@ -1259,8 +1259,12 @@ session.
   lifecycle: capture on mount + a ↻ refresh, a request token that drops stale/late answers, an
   explicit empty state ('' is an answer; a rejected capture is a failure, not empty), only the
   LAST `MD_OUTPUT_MAX_LINES` (5000) lines rendered and announced when cut, scrolled to the latest
-  output. Entering the view (output or ChatPanel) blurs the xterm, and leaving it restores focus
-  only if the terminal had it on entry (`terminal/useMdModeFocus.ts`). Tag chips via `NodeTags`.
+  output. Entering the view (output or ChatPanel) blurs the xterm; leaving it restores focus
+  only if the terminal had it on entry AND focus is now nowhere or still inside this node
+  (`terminal/useMdModeFocus.ts`). While the view is open, every "take the keyboard" path (hover
+  dwell, click, sidebar/notification jump) goes through `focusXtermUnlessCovered` and leaves the
+  hidden xterm unfocused — the overlay sits inside the node body, so a dwell over it used to route
+  keystrokes into a pane nobody could see (source-pinned in `useMdModeFocus.test.tsx`). Tag chips via `NodeTags`.
   **Selection + copy is tmux's** (its mouse is on — see the tmux section): drag to select, wheel to
   scroll tmux's history. A drag copies via copy-mode, and tmux emits **OSC 52** to the client, whose
   handler writes the **system clipboard** — the one copy path on every platform *and* over SSH (no

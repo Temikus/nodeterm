@@ -51,8 +51,11 @@ export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdown
   const run = useCallback(() => {
     const token = ++reqRef.current
     setCapturing(true)
-    void Promise.all([captureRef.current(nodeId), import('../lib/terminalOutputMarkdown')]).then(
-      ([text, md]) => {
+    // `.then(ok).catch(fail)`, not `.then(ok, fail)`: a throw INSIDE the fulfilment handler (the
+    // renderer on some pathological capture) must land in the error state too — with the two-arg
+    // form it escaped as an unhandled rejection and left `capturing` true, ↻ disabled for good.
+    void Promise.all([captureRef.current(nodeId), import('../lib/terminalOutputMarkdown')])
+      .then(([text, md]) => {
         if (token !== reqRef.current) return
         const tail = md.tailOutputLines(text)
         setView(
@@ -68,13 +71,12 @@ export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdown
             : { kind: 'empty' }
         )
         setCapturing(false)
-      },
-      () => {
+      })
+      .catch(() => {
         if (token !== reqRef.current) return
         setView({ kind: 'error' })
         setCapturing(false)
-      }
-    )
+      })
   }, [nodeId])
 
   useEffect(() => {

@@ -174,7 +174,7 @@ import { coldSelfHealVerdict } from '../terminal/cold-self-heal'
 import { WakeInputBuffer } from '../terminal/wake-input-buffer'
 import { FindBar } from '../components/FindBar'
 import { TerminalMarkdownView } from './TerminalMarkdownView'
-import { useMdModeFocus } from '../terminal/useMdModeFocus'
+import { focusXtermUnlessCovered, useMdModeFocus } from '../terminal/useMdModeFocus'
 import { IconChat, IconChevronDown, IconChevronRight, IconClose, IconEye, IconEyeOff, IconGrid, IconMic, IconMoveTo, IconPlay, IconReload, IconSearch, IconSparkle } from '../components/icons'
 import { NodeLabels } from '../components/kanban/NodeLabels'
 import { Tooltip } from '../components/Tooltip'
@@ -1508,6 +1508,10 @@ export function TerminalNode({
   const titleEditStartRef = useRef('')
   const skipBlurRef = useRef(false)
   const mdMode = !!data.mdMode
+  // Read by the "take the keyboard" paths (dwell, click, sidebar jump), which are closures that
+  // outlive a render: while the ⌘M view covers the terminal they must not focus the hidden xterm.
+  const mdModeRef = useRef(mdMode)
+  mdModeRef.current = mdMode
   const collapsed = !!data.collapsed
   // "This node must NOT hold a grid on the shared canvas right now." Four states, two reasons:
   //
@@ -4986,7 +4990,7 @@ export function TerminalNode({
     const aimed = opts?.ack !== false
     if (dwellRef.current) clearTimeout(dwellRef.current)
     if (aimed) setArmed(false)
-    termRef.current?.focus()
+    focusXtermUnlessCovered(termRef.current, mdModeRef.current)
     useTerminalFocus.getState().remember(id)
     useAgentStatus.getState().setActive(id, true)
     if (aimed) {
@@ -5022,7 +5026,7 @@ export function TerminalNode({
         return
       }
       setArmed(false)
-      termRef.current?.focus()
+      focusXtermUnlessCovered(termRef.current, mdModeRef.current)
       useTerminalFocus.getState().remember(id)
       useAgentStatus.getState().setActive(id, true)
       useAgentStatus.getState().clearUnread(id)
@@ -5307,7 +5311,7 @@ export function TerminalNode({
 
   // The ⌘M face (output view or ChatPanel) covers the xterm: blur it on entry so keystrokes stop
   // reaching a pane nobody can see, and hand focus back on exit only if it had it on entry.
-  useMdModeFocus(mdMode, () => termRef.current)
+  useMdModeFocus(mdMode, () => termRef.current, () => rootRef.current)
   // Full-scrollback capture for the output view (TerminalMarkdownView owns the lifecycle: capture on
   // mount, ↻, stale-answer guard, line cap, scroll-to-latest). Session-bound, so a relay tab
   // captures the PEER's pane.

@@ -4,6 +4,26 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { TerminalMarkdownView } from './TerminalMarkdownView'
 
+// Spy on the lazily imported renderer (vitest mocks dynamic imports too), so a dropped answer is
+// OBSERVABLE: React 18 no longer warns on a set-state-after-unmount, so "no console error" proves
+// nothing — "the renderer never ran for it" does.
+const md = vi.hoisted(() => ({ tail: vi.fn(), render: vi.fn(), throwRender: false }))
+vi.mock('../lib/terminalOutputMarkdown', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/terminalOutputMarkdown')>()
+  return {
+    ...actual,
+    tailOutputLines: (...args: Parameters<typeof actual.tailOutputLines>) => {
+      md.tail(...args)
+      return actual.tailOutputLines(...args)
+    },
+    renderTerminalOutput: (text: string) => {
+      md.render(text)
+      if (md.throwRender) throw new Error('renderer blew up')
+      return actual.renderTerminalOutput(text)
+    }
+  }
+})
+
 // Standalone harness — react-dom only, no testing-library (same shape as useDiscardWhenHidden).
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -24,6 +44,9 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  md.tail.mockClear()
+  md.render.mockClear()
+  md.throwRender = false
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -111,15 +134,41 @@ describe('TerminalMarkdownView', () => {
     expect(content().textContent).not.toContain('stale')
   })
 
-  it('ignores an answer that arrives after unmount', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('ignores an answer that arrives after unmount — the renderer never runs for it', async () => {
     mount()
     act(() => root.unmount())
     pending[0].resolve('late')
     await settle()
-    expect(errors).not.toHaveBeenCalled()
-    errors.mockRestore()
+    expect(md.tail).not.toHaveBeenCalled()
+    expect(md.render).not.toHaveBeenCalled()
     root = createRoot(host) // afterEach unmounts again
+  })
+
+  it('a stale answer after a newer one never reaches the renderer', async () => {
+    mount()
+    act(() => root.render(<TerminalMarkdownView nodeId="n2" capture={capture} hint="" />))
+    pending[1].resolve('newest')
+    await settle()
+    md.tail.mockClear()
+    md.render.mockClear()
+    pending[0].resolve('stale')
+    await settle()
+    expect(md.tail).not.toHaveBeenCalled()
+    expect(md.render).not.toHaveBeenCalled()
+  })
+
+  it('a renderer that throws lands in the error state, and ↻ works again', async () => {
+    md.throwRender = true
+    mount()
+    pending[0].resolve('boom')
+    await settle()
+    expect(content().textContent).toBe('Could not capture this terminal’s output.')
+    expect(refresh().disabled).toBe(false)
+    md.throwRender = false
+    act(() => refresh().click())
+    pending[1].resolve('fine now')
+    await settle()
+    expect(content().textContent).toContain('fine now')
   })
 
   it('renders only the last 5000 lines and says how many were cut', async () => {
