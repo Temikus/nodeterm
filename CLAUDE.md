@@ -4175,11 +4175,17 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   instead of watching it vanish on the next launch. The write path is raw and the gates read the
   sanitized map, so a dropped hand-edit is invisible in the UI but still on disk until a UI write
   or Reset replaces the map.
-- **Dispatch has exactly two owners.** The renderer's is ONE window `keydown` listener in
-  `Canvas.tsx`, on the **bubble** phase — the Settings recorder's `stopPropagation` on an armed
+- **Dispatch has exactly two owners per shell.** The renderer's is ONE window `keydown` listener
+  in `Canvas.tsx`, on the **bubble** phase — the Settings recorder's `stopPropagation` on an armed
   capture depends on that, and moving it to capture would let a recorded chord fire the command it
-  is being bound to. The main process's is `src/main/keydown-intercept.ts`, a **closed allowlist**
-  of chords it must steal back from the application menu before the page ever sees them.
+  is being bound to. On the desktop the other is `src/main/keydown-intercept.ts`, a **closed
+  allowlist** of chords it must steal back from the application menu before the page ever sees
+  them. The **Server Edition** has no main process, so for `node.toggleMarkdown` ONLY the bridge's
+  `renderer/bridge/markdown-toggle-key.ts` stands in for that intercept — still one owner per
+  shell, never both — and it runs on the bubble phase for the same recorder reason. **The Canvas
+  dispatcher must never gain a `node.toggleMarkdown` handler**: in the browser it would toggle
+  every hovered node twice, and on the desktop it would duplicate main's forward. (`node.close`
+  has no browser owner at all: the browser keeps ⌘W.)
 - **Invariants**
   - **Never read `settings.speech.shortcut`.** The dictation chord is `dictationBinding()` (the
     first effective `speech.dictation` binding); the legacy field is a **downgrade mirror only**,
@@ -4224,10 +4230,29 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
     dispatcher, whose main-intercepted command cases deliberately have no renderer handlers.
     `terminalChordBubbles` must therefore refuse every `MAIN_INTERCEPTED_COMMAND_IDS` command; if
     it returned true for `node.close`, xterm would withhold `^W` while the unclaimed event bubbled
-    to Canvas. One predicate, two main-process consumers are pinned in `keydown-intercept.test.ts`
+    to Canvas. **`node.toggleMarkdown` is the one exception and BUBBLES**: in the Server Edition its
+    owner is a WINDOW keydown listener in the bridge (`bridge/markdown-toggle-key.ts`, below), which
+    xterm would otherwise starve by writing `\r` and cancelling the event. It changes nothing on the
+    desktop — under app-first main claims the chord above the page, under terminal-first the
+    resolver already refuses it, and main has no terminal-focus stand-down for it. One predicate,
+    two main-process consumers are pinned in `keydown-intercept.test.ts`
     (including a source-level wiring pin, since the menu leg lives against a real Menu in index.ts),
     and `keybindingOverrides.test.ts` pins the renderer-to-xterm hand-off through
     `terminalKeyAction`.
+  - **The Server Edition's ⌘/Ctrl+M is the bridge's own window listener**
+    (`renderer/bridge/markdown-toggle-key.ts`, wired as `onMarkdownToggle` in `bridge/stubs.ts`):
+    a browser has no `before-input-event`, so the stub used to be `noopUnsub` and the chord did
+    nothing there. It mirrors the intercept — effective `node.toggleMarkdown` bindings read per
+    keystroke, `policyStandsDown` (now in `shared/keybindings.ts`, re-exported by
+    `keydown-intercept.ts`, so both shells run ONE predicate) with focus read from the DOM via
+    `isTerminalTarget` — plus a `defaultPrevented` event is left alone. **A held-key auto-repeat
+    is claimed but never re-toggles, in BOTH shells**: the browser listener preventDefaults it and
+    forwards nothing, and `keydownIntercept` answers `{action: null}` for a repeated toggle-markdown
+    chord (still swallowed, so the repeat cannot fall through to the menu's Minimize) — the same
+    shape as the held ⌘0. Bubble phase for the recorder's sake, installed only
+    while subscribed. It cannot double-fire on desktop (only `buildStubApi` reaches it; the relay
+    tab takes `onMarkdownToggle` from the local preload). macOS Chrome reserves ⌘M for minimize,
+    so the default chord only reaches a Mac browser tab after a remap (docs/SERVER.md).
   - **ShortcutsPanel is DERIVED from the registry, never a hand-written list.**
     `buildShortcutSections` iterates `COMMAND_DEFINITIONS` — one section per `CommandGroup` in
     registry source order, the label from `def.title`, and EVERY one of the command's EFFECTIVE
