@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { marked } from 'marked'
-import { renderTerminalOutput } from './terminalOutputMarkdown'
+import { MD_OUTPUT_MAX_LINES, renderTerminalOutput, tailOutputLines } from './terminalOutputMarkdown'
 import { renderMarkdown } from './markdown'
 
 /** Visible text of the rendered HTML, the way a user reads it. */
@@ -76,5 +76,34 @@ describe('renderTerminalOutput', () => {
     expect(marked.defaults.breaks).toBe(false)
     expect(renderMarkdown('a\nb')).toBe('<p>a\nb</p>\n')
     expect(renderMarkdown('<b>x</b>')).toBe('<p><b>x</b></p>\n')
+  })
+})
+
+describe('tailOutputLines', () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
+
+  it('is 5000 lines', () => {
+    expect(MD_OUTPUT_MAX_LINES).toBe(5000)
+  })
+
+  it('keeps output at or under the cap whole', () => {
+    expect(tailOutputLines(lines(3), 3)).toEqual({ text: lines(3), dropped: 0 })
+  })
+
+  it('keeps only the LAST max lines and reports how many were dropped', () => {
+    const r = tailOutputLines(lines(10), 4)
+    expect(r.dropped).toBe(6)
+    expect(r.text).toBe('line 7\nline 8\nline 9\nline 10')
+  })
+
+  it('does not let capture-pane trailing padding eat the budget', () => {
+    const r = tailOutputLines(`${lines(4)}\n\n\n   \n\n`, 4)
+    expect(r).toEqual({ text: lines(4), dropped: 0 })
+  })
+
+  it('defaults to MD_OUTPUT_MAX_LINES and handles CRLF + empty input', () => {
+    expect(tailOutputLines(lines(MD_OUTPUT_MAX_LINES + 2)).dropped).toBe(2)
+    expect(tailOutputLines('a\r\nb\r\nc', 2)).toEqual({ text: 'b\nc', dropped: 1 })
+    expect(tailOutputLines('')).toEqual({ text: '', dropped: 0 })
   })
 })

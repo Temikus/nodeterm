@@ -58,3 +58,26 @@ export function renderTerminalOutput(text: string): string {
   const html = terminalMarked.parse(src) as string
   return DOMPurify.sanitize(html)
 }
+
+/**
+ * How many lines of captured output the ⌘M view renders. The capture is the FULL scrollback — up
+ * to the tmux `history-limit` (50k lines), possibly over SSH — and marked + DOMPurify + layout of
+ * all of it runs synchronously on the renderer thread. The newest output is what the view is for
+ * (it opens scrolled to the bottom), so the oldest lines are the ones dropped.
+ */
+export const MD_OUTPUT_MAX_LINES = 5000
+
+/** The last `max` lines of a capture (after dropping capture-pane's trailing blank padding, so the
+ *  padding cannot spend the budget), and how many older lines were cut. A cut can land inside a
+ *  fenced block, which then renders from that point as the other side of the fence — accepted:
+ *  the cut is announced, and the tail is what the reader came for. */
+export function tailOutputLines(
+  text: string,
+  max: number = MD_OUTPUT_MAX_LINES
+): { text: string; dropped: number } {
+  const trimmed = trimCapture(text || '')
+  if (!trimmed) return { text: '', dropped: 0 }
+  const lines = trimmed.split('\n')
+  if (lines.length <= max) return { text: trimmed, dropped: 0 }
+  return { text: lines.slice(lines.length - max).join('\n'), dropped: lines.length - max }
+}

@@ -173,6 +173,8 @@ import { shouldAutoWake, shouldColdResume } from '../terminal/hibernation-policy
 import { coldSelfHealVerdict } from '../terminal/cold-self-heal'
 import { WakeInputBuffer } from '../terminal/wake-input-buffer'
 import { FindBar } from '../components/FindBar'
+import { TerminalMarkdownView } from './TerminalMarkdownView'
+import { useMdModeFocus } from '../terminal/useMdModeFocus'
 import { IconChat, IconChevronDown, IconChevronRight, IconClose, IconEye, IconEyeOff, IconGrid, IconMic, IconMoveTo, IconPlay, IconReload, IconSearch, IconSparkle } from '../components/icons'
 import { NodeLabels } from '../components/kanban/NodeLabels'
 import { Tooltip } from '../components/Tooltip'
@@ -1428,7 +1430,6 @@ export function TerminalNode({
       }
     }
   }, [focused])
-  const [mdHtml, setMdHtml] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const hoveredRef = useRef(false)
   // Render-fresh respawnNonce for the lifecycle cleanup: React updates this ref (render) before
@@ -5304,23 +5305,13 @@ export function TerminalNode({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
-  // When markdown mode turns on, capture the terminal output and render it. Skipped when the
-  // chat panel is active (it loads its own structured transcript), but still runs as the
-  // fallback when a chat-capable node has no sessionId yet.
-  useEffect(() => {
-    if (data.mdMode && !useChat) {
-      // Full scrollback (not just the visible viewport) so the whole session renders.
-      // `marked` + DOMPurify are imported HERE rather than at module scope: this node is on the
-      // startup path (it is what the canvas is made of), the markdown renderer is not — it runs
-      // only after someone presses ⌘M. The capture is already a round trip to main, so the extra
-      // chunk fetch is not even on a path the user can perceive.
-      // `renderTerminalOutput`, not `renderMarkdown`: output keeps its line breaks, and tag-like
-      // text (`echo <stdin>`) shows as text instead of being parsed as HTML and stripped.
-      void Promise.all([api.pty.capture(id, true), import('../lib/terminalOutputMarkdown')]).then(
-        ([text, md]) => setMdHtml(md.renderTerminalOutput(text))
-      )
-    }
-  }, [data.mdMode, id, useChat])
+  // The ⌘M face (output view or ChatPanel) covers the xterm: blur it on entry so keystrokes stop
+  // reaching a pane nobody can see, and hand focus back on exit only if it had it on entry.
+  useMdModeFocus(mdMode, () => termRef.current)
+  // Full-scrollback capture for the output view (TerminalMarkdownView owns the lifecycle: capture on
+  // mount, ↻, stale-answer guard, line cap, scroll-to-latest). Session-bound, so a relay tab
+  // captures the PEER's pane.
+  const captureFull = useCallback((nodeId: string) => api.pty.capture(nodeId, true), [api])
 
   // Unread = the agent finished (not still working/waiting/blocked) while you weren't looking.
   // Drives both the header badge and a node-wide glow so it's obvious at a glance.
@@ -6032,13 +6023,11 @@ export function TerminalNode({
               />
             </Suspense>
           ) : (
-            <div className="term-md nodrag nowheel">
-              <div className="term-md__bar">
-                <span>Markdown</span>
-                <span className="term-md__hint">{mdChip ? `${mdChip} to exit` : 'Exit'}</span>
-              </div>
-              <div className="term-md__content" dangerouslySetInnerHTML={{ __html: mdHtml }} />
-            </div>
+            <TerminalMarkdownView
+              nodeId={id}
+              capture={captureFull}
+              hint={mdChip ? `${mdChip} to exit` : 'Exit'}
+            />
           ))}
       </div>
     </div>

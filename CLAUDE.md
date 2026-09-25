@@ -1254,7 +1254,13 @@ session.
   click-to-rename title, ✦ AI-name, ×. Body has a **hover guard** overlay: dwell
   `settings.panHoverDelay` (default 600 ms) before the terminal takes focus — before that,
   drag = move node, scroll = pan canvas. **Cmd/Ctrl+M** (while hovered) toggles a markdown
-  render of the captured output. Tag chips via `NodeTags`.
+  render of the captured output — `nodes/TerminalMarkdownView.tsx`, which takes a node id + a
+  `capture` function (no React Flow context, so the kanban card modal can reuse it) and owns the
+  lifecycle: capture on mount + a ↻ refresh, a request token that drops stale/late answers, an
+  explicit empty state ('' is an answer; a rejected capture is a failure, not empty), only the
+  LAST `MD_OUTPUT_MAX_LINES` (5000) lines rendered and announced when cut, scrolled to the latest
+  output. Entering the view (output or ChatPanel) blurs the xterm, and leaving it restores focus
+  only if the terminal had it on entry (`terminal/useMdModeFocus.ts`). Tag chips via `NodeTags`.
   **Selection + copy is tmux's** (its mouse is on — see the tmux section): drag to select, wheel to
   scroll tmux's history. A drag copies via copy-mode, and tmux emits **OSC 52** to the client, whose
   handler writes the **system clipboard** — the one copy path on every platform *and* over SSH (no
