@@ -83,7 +83,7 @@ import { effectiveSize, type PtySize } from './pty-size'
 import { machOArch, archMismatch } from './macho-arch'
 import { writeScrollback, readScrollback, deleteScrollback } from './scrollback-store'
 import { claudeConfigDirFor } from './claude-config-dir'
-import { findExecutableSync, findInPathString, resolveShellPath, shellPathNow } from './exec-path'
+import { envPathKey, findExecutableSync, findInPathString, resolveShellPath, shellPathNow } from './exec-path'
 import {
   AUTH_ENV_STRIP,
   accountTmuxEnvArgs,
@@ -2379,6 +2379,7 @@ export class PtyManager {
       // setting this on a confident `fresh:false` would spend a round trip per warm node.
       ...(freshUnverified && !fresh ? { freshUnverified: true as const } : {}),
       ...(accountFallback ? { accountFallback } : {}),
+      ...(spawned?.sessionHost ? { sessionHost: true as const } : {}),
       ...(staleCwd ? { staleCwd: true as const } : {}),
       ...(screen ? { screen } : {})
     }
@@ -2903,7 +2904,11 @@ export class PtyManager {
     if (options.agentId && hasSharedIdentity(options.agentId as AgentId) && !options.sshRemote) {
       // Windows exposes the inherited variable as `Path`; reading only the POSIX spelling
       // silently drops the user's PATH and leaves the managed launcher unable to find `codex`.
-      env.PATH = `${codexLauncherDir()}${path.delimiter}${env.PATH ?? env.Path ?? ''}`
+      // Prepend onto the key the environment ALREADY uses: a spread of Windows' `process.env` spells
+      // it `Path`, and adding a second `PATH` beside it hands the child two case-insensitively equal
+      // variables — which one it reads is up to the child's runtime.
+      const pathKey = envPathKey(env)
+      env[pathKey] = `${codexLauncherDir()}${path.delimiter}${env[pathKey] ?? ''}`
     }
 
     // Managed Claude account: the whole session runs under the account's private config

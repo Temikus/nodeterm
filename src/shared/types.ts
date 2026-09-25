@@ -286,6 +286,17 @@ export interface PtyCreateResult {
    */
   persistent?: boolean
   /**
+   * This session is owned by the session-host backend (Windows, or POSIX with no tmux), not tmux.
+   * Set only on a SPAWN answer; absent everywhere else (tmux, plain shell, a join, an older core).
+   *
+   * The renderer's launch writer reads it for one decision: a FRESH session-host shell is trusted
+   * without a pane probe, because that backend's probe is a process-tree walk that cannot tell a
+   * shell from its prompt's helpers (a `git`/`starship` child reads as "not a shell") — issue
+   * #916. A fresh tmux pane keeps its probe: tmux's answer is exact, and it still covers the rare
+   * `new-session -A` race where another client created the session first.
+   */
+  sessionHost?: boolean
+  /**
    * REFUSED: this node's session was permanently destroyed by ANOTHER client, so nothing was
    * spawned (`sessionId` is empty) — the terminal shows the "closed by <name>" state instead.
    *

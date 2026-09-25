@@ -8,7 +8,7 @@ import { installGlassCellBackgrounds, scheduleGlassCellAlpha, setGlassCellAlpha 
 import { deliverRelayInitialLaunch } from '../terminal/relay-initial-launch'
 import { commitLaunch } from '../terminal/launch-attempt'
 import { isLaunchShell } from '@shared/agents/pane'
-import { createLaunchWriter, deliverInitialLaunch, launchCommand, registerLaunchWriter } from '../terminal/launch-command'
+import { createLaunchWriter, deliverInitialLaunch, launchCommand, registerLaunchWriter, trustsFreshShell } from '../terminal/launch-command'
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { NODE_MIN_SIZES } from '../lib/nodeSizing'
 import {
@@ -3162,6 +3162,7 @@ export function TerminalNode({
           cursor,
           coAttachMouse,
           persistent,
+          sessionHost,
           unavailable
         }) => {
         // The spawn answered: whatever it says, we are no longer waiting on the host.
@@ -3470,7 +3471,7 @@ export function TerminalNode({
           io: { write: (d: string) => transport.write(sid, d), onData: (cb: (data: string) => void) => transport.onData(sid, cb) },
           // A fresh shell is known at spawn; subsequent/manual deliveries must recheck the pane.
           shellReady: async (manual: boolean) =>
-            (!manual && fresh) || isLaunchShell(await queryPaneWithin(() => api.pty.paneCommand(id), RESTART_EXIT_TIMEOUT_MS)),
+            trustsFreshShell({ manual, fresh, persistent: sessionPersistent, sessionHost }) || isLaunchShell(await queryPaneWithin(() => api.pty.paneCommand(id), RESTART_EXIT_TIMEOUT_MS)),
           killLine: getTerminalKillLine(),
           cleanup: (cancel: () => void) => { cleanups.push(cancel) }
         }
