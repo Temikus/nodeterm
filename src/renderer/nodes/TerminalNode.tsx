@@ -5314,8 +5314,10 @@ export function TerminalNode({
       // startup path (it is what the canvas is made of), the markdown renderer is not — it runs
       // only after someone presses ⌘M. The capture is already a round trip to main, so the extra
       // chunk fetch is not even on a path the user can perceive.
-      void Promise.all([api.pty.capture(id, true), import('../lib/markdown')]).then(
-        ([text, md]) => setMdHtml(md.renderMarkdown(text))
+      // `renderTerminalOutput`, not `renderMarkdown`: output keeps its line breaks, and tag-like
+      // text (`echo <stdin>`) shows as text instead of being parsed as HTML and stripped.
+      void Promise.all([api.pty.capture(id, true), import('../lib/terminalOutputMarkdown')]).then(
+        ([text, md]) => setMdHtml(md.renderTerminalOutput(text))
       )
     }
   }, [data.mdMode, id, useChat])
