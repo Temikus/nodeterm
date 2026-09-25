@@ -34,7 +34,10 @@ export interface TerminalMarkdownViewProps {
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'empty' }
-  | { kind: 'error' }
+  /** `capture` = the capture (or the renderer chunk) never arrived; `render` = the text arrived and
+   *  the renderer threw on it. Different facts, different sentences: telling a user their terminal
+   *  could not be captured when it was captured fine sends them after the wrong problem. */
+  | { kind: 'error'; stage: 'capture' | 'render' }
   | { kind: 'ready'; html: string; kept: number; dropped: number }
 
 export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdownViewProps) {
@@ -51,15 +54,16 @@ export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdown
   const run = useCallback(() => {
     const token = ++reqRef.current
     setCapturing(true)
-    // `.then(ok).catch(fail)`, not `.then(ok, fail)`: a throw INSIDE the fulfilment handler (the
-    // renderer on some pathological capture) must land in the error state too — with the two-arg
-    // form it escaped as an unhandled rejection and left `capturing` true, ↻ disabled for good.
+    // `.then(ok).catch(fail)`, not `.then(ok, fail)`: nothing thrown in the fulfilment path may
+    // escape as an unhandled rejection and leave `capturing` true, ↻ disabled for good. A renderer
+    // throw is caught inside (→ 'render'); the catch is the capture/import leg (→ 'capture').
     void Promise.all([captureRef.current(nodeId), import('../lib/terminalOutputMarkdown')])
       .then(([text, md]) => {
         if (token !== reqRef.current) return
-        const tail = md.tailOutputLines(text)
-        setView(
-          tail.text
+        let next: ViewState
+        try {
+          const tail = md.tailOutputLines(text)
+          next = tail.text
             ? {
                 kind: 'ready',
                 html: md.renderTerminalOutput(tail.text),
@@ -69,12 +73,15 @@ export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdown
                 dropped: tail.dropped
               }
             : { kind: 'empty' }
-        )
+        } catch {
+          next = { kind: 'error', stage: 'render' }
+        }
+        setView(next)
         setCapturing(false)
       })
       .catch(() => {
         if (token !== reqRef.current) return
-        setView({ kind: 'error' })
+        setView({ kind: 'error', stage: 'capture' })
         setCapturing(false)
       })
   }, [nodeId])
@@ -132,7 +139,9 @@ export function TerminalMarkdownView({ nodeId, capture, hint }: TerminalMarkdown
             ? 'Capturing…'
             : view.kind === 'empty'
               ? 'Nothing captured from this terminal.'
-              : 'Could not capture this terminal’s output.'}
+              : view.stage === 'render'
+                ? 'Could not render this terminal’s output.'
+                : 'Could not capture this terminal’s output.'}
         </div>
       )}
     </div>

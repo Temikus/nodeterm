@@ -157,12 +157,12 @@ describe('TerminalMarkdownView', () => {
     expect(md.render).not.toHaveBeenCalled()
   })
 
-  it('a renderer that throws lands in the error state, and ↻ works again', async () => {
+  it('a renderer that throws says RENDER failed (not capture), and ↻ works again', async () => {
     md.throwRender = true
     mount()
     pending[0].resolve('boom')
     await settle()
-    expect(content().textContent).toBe('Could not capture this terminal’s output.')
+    expect(content().textContent).toBe('Could not render this terminal’s output.')
     expect(refresh().disabled).toBe(false)
     md.throwRender = false
     act(() => refresh().click())
