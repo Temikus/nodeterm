@@ -4189,10 +4189,25 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
     dispatcher, whose main-intercepted command cases deliberately have no renderer handlers.
     `terminalChordBubbles` must therefore refuse every `MAIN_INTERCEPTED_COMMAND_IDS` command; if
     it returned true for `node.close`, xterm would withhold `^W` while the unclaimed event bubbled
-    to Canvas. One predicate, two main-process consumers are pinned in `keydown-intercept.test.ts`
+    to Canvas. **`node.toggleMarkdown` is the one exception and BUBBLES**: in the Server Edition its
+    owner is a WINDOW keydown listener in the bridge (`bridge/markdown-toggle-key.ts`, below), which
+    xterm would otherwise starve by writing `\r` and cancelling the event. It changes nothing on the
+    desktop — under app-first main claims the chord above the page, under terminal-first the
+    resolver already refuses it, and main has no terminal-focus stand-down for it. One predicate, two main-process consumers are pinned in `keydown-intercept.test.ts`
     (including a source-level wiring pin, since the menu leg lives against a real Menu in index.ts),
     and `keybindingOverrides.test.ts` pins the renderer-to-xterm hand-off through
     `terminalKeyAction`.
+  - **The Server Edition's ⌘/Ctrl+M is the bridge's own window listener**
+    (`renderer/bridge/markdown-toggle-key.ts`, wired as `onMarkdownToggle` in `bridge/stubs.ts`):
+    a browser has no `before-input-event`, so the stub used to be `noopUnsub` and the chord did
+    nothing there. It mirrors the intercept — effective `node.toggleMarkdown` bindings read per
+    keystroke, `policyStandsDown` (now in `shared/keybindings.ts`, re-exported by
+    `keydown-intercept.ts`, so both shells run ONE predicate) with focus read from the DOM via
+    `isTerminalTarget` — plus two refusals: auto-repeat is swallowed without re-toggling, and a
+    `defaultPrevented` event is left alone. Bubble phase for the recorder's sake, installed only
+    while subscribed. It cannot double-fire on desktop (only `buildStubApi` reaches it; the relay
+    tab takes `onMarkdownToggle` from the local preload). macOS Chrome reserves ⌘M for minimize,
+    so the default chord only reaches a Mac browser tab after a remap (docs/SERVER.md).
   - **ShortcutsPanel is DERIVED from the registry, never a hand-written list.**
     `buildShortcutSections` iterates `COMMAND_DEFINITIONS` — one section per `CommandGroup` in
     registry source order, the label from `def.title`, and EVERY one of the command's EFFECTIVE

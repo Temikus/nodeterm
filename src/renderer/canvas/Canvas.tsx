@@ -235,6 +235,7 @@ import {
   type GlobalKeydownDeps
 } from '../lib/globalKeybindings'
 import { isTerminalTarget, type ContextElement } from '../lib/keyContext'
+import { nextMdMode } from '../lib/markdownModeToggle'
 import { installTerminalFocusMirror } from '../lib/terminalFocusMirror'
 import { nodeToRefocus } from '../lib/focusRestore'
 import { openDialogCount } from '../components/dialog-stack'
@@ -5617,6 +5618,11 @@ export function Canvas() {
   // TerminalNode and EditorNode each subscribe for themselves — so this listener exists ONLY to
   // raise the same notice, and must stay side-effect-free: it consumes nothing, prevents nothing,
   // and the nodes' own subscriptions are untouched by it.
+  // The same event arrives from the Server Edition's browser keydown listener
+  // (bridge/markdown-toggle-key.ts) instead of IPC, and the semantics carry over unchanged: that
+  // listener fires only when it CLAIMED the chord (it stands down under terminal-first exactly as
+  // main does, and xterm lets the chord bubble out to it), so a focused terminal here still means
+  // app-first took the key from it — and `noteTerminalCapture` is itself silent otherwise.
   useEffect(() => {
     return window.nodeTerminal.onMarkdownToggle(() => {
       if (isTerminalTarget(document.activeElement as unknown as ContextElement | null)) {
@@ -6293,16 +6299,18 @@ export function Canvas() {
     return () => setMoveIntoWorktreeHandler(null)
   }, [requestMoveIntoWorktree])
 
+  // One verdict for the whole targeted set (`nextMdMode`): a mixed selection turns the view ON
+  // everywhere instead of inverting each node, which no number of clicks could ever unify.
   const toggleMarkdown = useCallback(
     (ids: string[]) => {
       const set = new Set(ids)
-      setNodes((ns) =>
-        ns.map((n) =>
-          set.has(n.id) && n.type === 'terminal'
-            ? { ...n, data: { ...n.data, mdMode: !n.data.mdMode } }
-            : n
+      setNodes((ns) => {
+        const next = nextMdMode(ns, ids)
+        if (next === null) return ns
+        return ns.map((n) =>
+          set.has(n.id) && n.type === 'terminal' ? { ...n, data: { ...n.data, mdMode: next } } : n
         )
-      )
+      })
     },
     [setNodes]
   )
@@ -8294,7 +8302,10 @@ export function Canvas() {
       'node.zoneUp': () => snapNodeToZone('top-half'),
       'node.zoneDown': () => snapNodeToZone('bottom-half')
       // node.close / node.toggleMarkdown: main-process intercepted on desktop; deliberately
-      // no renderer handler (the browser owns ⌘W in the Server Edition — see bridge/stubs.ts).
+      // no renderer handler here. The browser owns ⌘W in the Server Edition (see
+      // bridge/stubs.ts); ⌘/Ctrl+M there is matched by the bridge's OWN window listener
+      // (bridge/markdown-toggle-key.ts), which feeds the same `onMarkdownToggle` subscribers the
+      // desktop IPC does — a handler here as well would toggle every hovered node twice.
       // terminal.* / scm.commit / speech.dictation: owned by their local listeners.
     },
     gestures: {

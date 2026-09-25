@@ -25,6 +25,10 @@ import {
   type UpdatePolicy
 } from '../../shared/types'
 import { E_UNSUPPORTED } from '../../shared/rpc'
+import { isMacPlatform } from '../../shared/platform-utils'
+import { effectiveBindings, terminalShortcutPolicy } from '../lib/keybindingOverrides'
+import type { ContextElement } from '../lib/keyContext'
+import { createMarkdownToggleSource } from './markdown-toggle-key'
 
 /** Reject with a coded error the RPC layer + renderer recognize (renderer degrades silently). */
 export function unsupported(name: string): Promise<never> {
@@ -462,7 +466,8 @@ export function buildStubApi(): Omit<
       // Deliberate no-op (not a gap): the recording bit exists to stand the DESKTOP's
       // `before-input-event` intercepts down, and a browser tab has no application menu to steal
       // ⌘W/⌘M/⌘0 back from — nothing intercepts here, so there is nothing to suspend. The
-      // recorder's own preventDefault/stopPropagation is the whole path in this shell.
+      // recorder's own preventDefault/stopPropagation is the whole path in this shell; that also
+      // covers the ⌘M window listener below, which is bubble-phase and skips a prevented event.
       setRecording: noop,
       // Deliberate no-op for the same reason, one step further: the mirror exists so the DESKTOP's
       // intercepts can stand down under `terminal-first`, and there are no intercepts here to
@@ -470,7 +475,20 @@ export function buildStubApi(): Omit<
       // renderer's own dispatcher (`keyDispatchContextFor`), which reads focus directly.
       setTerminalFocused: noop
     },
-    onMarkdownToggle: noopUnsub,
+    // REAL, not a stub: a browser tab has no main process to intercept ⌘/Ctrl+M, so the chord is
+    // matched by a window keydown listener here (bindings, terminal-first stand-down and focus all
+    // read live — see markdown-toggle-key.ts, including why macOS Chrome never delivers ⌘M).
+    // Node-env tests have no window: they get the inert unsubscribe the boot contract requires.
+    onMarkdownToggle:
+      typeof window === 'undefined'
+        ? noopUnsub
+        : createMarkdownToggleSource({
+            target: window,
+            bindings: () => effectiveBindings('node.toggleMarkdown'),
+            isMac: isMacPlatform,
+            policy: terminalShortcutPolicy,
+            activeElement: () => document.activeElement as unknown as ContextElement | null
+          }),
     onCloseNode: noopUnsub,
     // Deliberate no-op (not a gap): a browser tab has no application menu to steal ⌘0, so the
     // renderer's own keydown handler is the whole path there.
