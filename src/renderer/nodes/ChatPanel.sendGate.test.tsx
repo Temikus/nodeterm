@@ -34,9 +34,12 @@ const NODE = 'n-chat-gate'
 let host: HTMLDivElement
 let root: Root
 
-function setAgentState(state: 'working' | 'waiting' | 'blocked' | 'done' | undefined): void {
+function setAgentState(
+  state: 'working' | 'waiting' | 'blocked' | 'done' | undefined,
+  extra: { hibernated?: boolean } = {}
+): void {
   useAgentStatus.setState((s) => ({
-    byId: { ...s.byId, [NODE]: { ...(s.byId[NODE] ?? {}), state } as (typeof s.byId)[string] }
+    byId: { ...s.byId, [NODE]: { ...(s.byId[NODE] ?? {}), state, ...extra } as (typeof s.byId)[string] }
   }))
 }
 
@@ -64,8 +67,8 @@ beforeEach(() => {
   root = createRoot(host)
 })
 
-afterEach(() => {
-  act(() => root.unmount())
+afterEach(async () => {
+  await act(async () => root.unmount())
   host.remove()
   useAgentStatus.setState((s) => {
     const byId = { ...s.byId }
@@ -99,6 +102,24 @@ describe('ChatPanel send gate', () => {
     // the re-render — the handler's render-time `state` is still 'done'.
     await act(async () => {
       setAgentState('waiting')
+      enter(ta)
+    })
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('disables the composer on a hibernated node: its state still reads done, but a SHELL owns the pane', async () => {
+    setAgentState('done', { hibernated: true })
+    const ta = await mount()
+    expect(ta.disabled).toBe(true)
+    expect(ta.placeholder).toMatch(/asleep to save memory/)
+  })
+
+  it('re-reads hibernation at send time too', async () => {
+    setAgentState('done')
+    const ta = await mount()
+    await act(async () => type(ta, 'ls -la'))
+    await act(async () => {
+      setAgentState('done', { hibernated: true })
       enter(ta)
     })
     expect(sendText).not.toHaveBeenCalled()

@@ -2337,8 +2337,11 @@ command-bearing opens; this does not add a human-confirm dialog or change mobile
   `renderer/lib/chatSendGate.ts`) — never in `waiting`/`blocked`, not just never in `working`:
   PermissionRequest and AskUserQuestion both normalize to `waiting`, the pane then holds a TUI
   select dialog this view does not show, and `sendText`'s Enter would ANSWER it ("Yes" is the
-  default highlight). The state is re-read from the store at send time, not only at render. Same
-  trap as the in-place restart's `/exit`.
+  default highlight). It also refuses a **hibernated / paused / dropped** node, whose `state` still
+  reads `done` while a SHELL owns the pane — the message would run as a shell command; those flags
+  rank above the state (`chatSendRefusal`). Everything is re-read from the store at send time, not
+  only at render. Same trap as the in-place restart's `/exit`. The ↻ in the panel bar is the only
+  reload for a session whose hooks never report `working`.
 - **Subagent visualization** (agents in `SUBAGENT_CAPABLE`) — `subagent-start`/`subagent-end`
   normalized events (from Claude's `PreToolUse`/`PostToolUse` on tool `Agent`/`Task`, correlated
   by `tool_use_id`) drive a transient `state/agentNodes.ts` store. Claude launches subagents
