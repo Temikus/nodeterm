@@ -173,6 +173,9 @@ import { shouldAutoWake, shouldColdResume } from '../terminal/hibernation-policy
 import { coldSelfHealVerdict } from '../terminal/cold-self-heal'
 import { WakeInputBuffer } from '../terminal/wake-input-buffer'
 import { FindBar } from '../components/FindBar'
+import { TerminalMarkdownView } from './TerminalMarkdownView'
+import { focusXtermUnlessCovered, terminalOwnsFileInput, useMdModeFocus } from '../terminal/useMdModeFocus'
+import { canvasOwnsMarkdownChord } from '../lib/markdownChord'
 import { IconChat, IconChevronDown, IconChevronRight, IconClose, IconEye, IconEyeOff, IconGrid, IconMic, IconMoveTo, IconPlay, IconReload, IconSearch, IconSparkle } from '../components/icons'
 import { NodeLabels } from '../components/kanban/NodeLabels'
 import { Tooltip } from '../components/Tooltip'
@@ -1428,7 +1431,6 @@ export function TerminalNode({
       }
     }
   }, [focused])
-  const [mdHtml, setMdHtml] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const hoveredRef = useRef(false)
   // Render-fresh respawnNonce for the lifecycle cleanup: React updates this ref (render) before
@@ -1507,6 +1509,10 @@ export function TerminalNode({
   const titleEditStartRef = useRef('')
   const skipBlurRef = useRef(false)
   const mdMode = !!data.mdMode
+  // Read by the "take the keyboard" paths (dwell, click, sidebar jump), which are closures that
+  // outlive a render: while the ⌘M view covers the terminal they must not focus the hidden xterm.
+  const mdModeRef = useRef(mdMode)
+  mdModeRef.current = mdMode
   const collapsed = !!data.collapsed
   // "This node must NOT hold a grid on the shared canvas right now." Four states, two reasons:
   //
@@ -4985,7 +4991,7 @@ export function TerminalNode({
     const aimed = opts?.ack !== false
     if (dwellRef.current) clearTimeout(dwellRef.current)
     if (aimed) setArmed(false)
-    termRef.current?.focus()
+    focusXtermUnlessCovered(termRef.current, mdModeRef.current)
     useTerminalFocus.getState().remember(id)
     useAgentStatus.getState().setActive(id, true)
     if (aimed) {
@@ -5021,7 +5027,7 @@ export function TerminalNode({
         return
       }
       setArmed(false)
-      termRef.current?.focus()
+      focusXtermUnlessCovered(termRef.current, mdModeRef.current)
       useTerminalFocus.getState().remember(id)
       useAgentStatus.getState().setActive(id, true)
       useAgentStatus.getState().clearUnread(id)
@@ -5072,6 +5078,7 @@ export function TerminalNode({
 
   // ---- file drop: paste dropped file paths into the terminal (native-terminal behavior) ----
   const onBodyDragOver = (e: React.DragEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // the ⌘M view is on top: no drop overlay
     if (!Array.from(e.dataTransfer.types).includes('Files')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
@@ -5150,6 +5157,7 @@ export function TerminalNode({
   }
 
   const onBodyDrop = async (e: React.DragEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // covered by the ⌘M view (see predicate)
     const files = Array.from(e.dataTransfer.files)
     setDropping(false)
     if (!files.length) return
@@ -5163,6 +5171,7 @@ export function TerminalNode({
   // CAPTURE phase: xterm listens on its own textarea below us, so stopping here is the only way to
   // keep it from also pasting whatever text the clipboard happened to carry alongside the file.
   const onBodyPaste = (e: React.ClipboardEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // the ChatPanel composer takes its own paste
     const files = pastedFiles(e.clipboardData)
     if (files.length) {
       e.preventDefault()
@@ -5273,10 +5282,12 @@ export function TerminalNode({
     }
   }, [id, canReadTitleNode, status?.sessionId, data.titleAuto, updateNodeData])
 
-  // Cmd/Ctrl+M toggles markdown view of this terminal's output (only when hovered).
+  // Cmd/Ctrl+M toggles markdown view of this terminal's output — only when hovered, and never while
+  // a board is up (the card modal owns the chord there; see `canvasOwnsMarkdownChord`).
   useEffect(() => {
     return window.nodeTerminal.onMarkdownToggle(() => {
-      if (hoveredRef.current) updateNodeData(id, (n) => ({ mdMode: !n.data.mdMode }))
+      if (!canvasOwnsMarkdownChord(hoveredRef.current, isGlobalKanbanOpen() || isKanbanOpen(useProjects.getState().activeProjectId ?? ''))) return
+      updateNodeData(id, (n) => ({ mdMode: !n.data.mdMode }))
     })
   }, [id, updateNodeData])
 
@@ -5304,21 +5315,13 @@ export function TerminalNode({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
-  // When markdown mode turns on, capture the terminal output and render it. Skipped when the
-  // chat panel is active (it loads its own structured transcript), but still runs as the
-  // fallback when a chat-capable node has no sessionId yet.
-  useEffect(() => {
-    if (data.mdMode && !useChat) {
-      // Full scrollback (not just the visible viewport) so the whole session renders.
-      // `marked` + DOMPurify are imported HERE rather than at module scope: this node is on the
-      // startup path (it is what the canvas is made of), the markdown renderer is not — it runs
-      // only after someone presses ⌘M. The capture is already a round trip to main, so the extra
-      // chunk fetch is not even on a path the user can perceive.
-      void Promise.all([api.pty.capture(id, true), import('../lib/markdown')]).then(
-        ([text, md]) => setMdHtml(md.renderMarkdown(text))
-      )
-    }
-  }, [data.mdMode, id, useChat])
+  // The ⌘M face (output view or ChatPanel) covers the xterm: blur it on entry so keystrokes stop
+  // reaching a pane nobody can see, and hand focus back on exit only if it had it on entry.
+  useMdModeFocus(mdMode, () => termRef.current, () => rootRef.current)
+  // Full-scrollback capture for the output view (TerminalMarkdownView owns the lifecycle: capture on
+  // mount, ↻, stale-answer guard, line cap, scroll-to-latest). Session-bound, so a relay tab
+  // captures the PEER's pane.
+  const captureFull = useCallback((nodeId: string) => api.pty.capture(nodeId, true), [api])
 
   // Unread = the agent finished (not still working/waiting/blocked) while you weren't looking.
   // Drives both the header badge and a node-wide glow so it's obvious at a glance.
@@ -6030,13 +6033,11 @@ export function TerminalNode({
               />
             </Suspense>
           ) : (
-            <div className="term-md nodrag nowheel">
-              <div className="term-md__bar">
-                <span>Markdown</span>
-                <span className="term-md__hint">{mdChip ? `${mdChip} to exit` : 'Exit'}</span>
-              </div>
-              <div className="term-md__content" dangerouslySetInnerHTML={{ __html: mdHtml }} />
-            </div>
+            <TerminalMarkdownView
+              nodeId={id}
+              capture={captureFull}
+              hint={mdChip ? `${mdChip} to exit` : 'Exit'}
+            />
           ))}
       </div>
     </div>

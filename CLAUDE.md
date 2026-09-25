@@ -1254,7 +1254,21 @@ session.
   click-to-rename title, ✦ AI-name, ×. Body has a **hover guard** overlay: dwell
   `settings.panHoverDelay` (default 600 ms) before the terminal takes focus — before that,
   drag = move node, scroll = pan canvas. **Cmd/Ctrl+M** (while hovered) toggles a markdown
-  render of the captured output. Tag chips via `NodeTags`.
+  render of the captured output — `nodes/TerminalMarkdownView.tsx`, which takes a node id + a
+  `capture` function (no React Flow context, so the kanban card modal can reuse it) and owns the
+  lifecycle: capture on mount + a ↻ refresh, a request token that drops stale/late answers, an
+  explicit empty state ('' is an answer; a rejected capture is a failure, not empty), only the
+  LAST `MD_OUTPUT_MAX_LINES` (5000) lines rendered and announced when cut, scrolled to the latest
+  output. Entering the view (output or ChatPanel) blurs the xterm; leaving it restores focus
+  only if the terminal had it on entry AND focus is now nowhere or still inside this node
+  (`terminal/useMdModeFocus.ts`). While the view is open, every "take the keyboard" path (hover
+  dwell, click, sidebar/notification jump) goes through `focusXtermUnlessCovered` and leaves the
+  hidden xterm unfocused — the overlay sits inside the node body, so a dwell over it used to route
+  keystrokes into a pane nobody could see. The body's file DROP / file PASTE handlers (which focus
+  the xterm and paste paths into it) are the other way in, and they stand aside while covered
+  (`terminalOwnsFileInput`): a screenshot pasted into the ChatPanel composer used to be caught in
+  the capture phase and typed as a path into the hidden pane. Both are source-pinned in
+  `useMdModeFocus.test.tsx`. Tag chips via `NodeTags`.
   **Selection + copy is tmux's** (its mouse is on — see the tmux section): drag to select, wheel to
   scroll tmux's history. A drag copies via copy-mode, and tmux emits **OSC 52** to the client, whose
   handler writes the **system clipboard** — the one copy path on every platform *and* over SSH (no
@@ -1537,7 +1551,12 @@ session.
 
 Monaco is wired in `renderer/editor/monaco-setup.ts` (language workers bundled via Vite
 `?worker` — no CDN; CSP `worker-src` allows them). Markdown rendering is shared in
-`renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize).
+`renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize). Terminal OUTPUT (the ⌘M output view)
+goes through `renderer/lib/terminalOutputMarkdown.ts` instead: a private `Marked` instance with
+`breaks` on (output is line-oriented — without it `ls -l` joined into one paragraph) that renders
+raw-HTML tokens as escaped TEXT (a program's `<stdin>` is not markup; parsed as HTML, DOMPurify
+stripped it) and trims capture-pane's trailing padding. The escape is on the `html` token, never a
+global pre-escape of `<`, which would double-escape code spans/fences.
 
 **A link in rendered markdown must never navigate the app window.** DOMPurify keeps an anchor's
 href as written, and agents write relative links constantly (`[pty-manager.ts](src/core/pty-manager.ts:4100)`).
@@ -4793,9 +4812,22 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   cards edit their text in the modal (live both ways).
   The modal header carries the terminal node's actions (search via `useTerminalSearch`+
   `FindBar` on the modal xterm; dictate via the same `nodeterm:dictate` event — `.dictation`
-  overlay z is 60, ABOVE the modal scrim; ✦ `pty.generateName` through the modal rename funnel).
+  overlay z is 60, ABOVE the modal scrim; ✦ `pty.generateName` through the modal rename funnel;
+  and the **⌘M view** — a header toggle (`IconMarkdown`) plus the chord, which lays the SAME face
+  the canvas node shows over the live viewer: `ChatPanel` when `canChat(created agent)` and the
+  session id is known, else `TerminalMarkdownView`. Three rules: the state is MODAL-LOCAL and per OPENING
+  (never `data.mdMode` — that would flip the canvas node under the board too); the viewer
+  stays MOUNTED underneath (covered, not swapped, so its co-attach never detaches/re-attaches) and
+  gets the same focus hand-off as the node (`ModalTerminal`'s `covered` → `useMdModeFocus`); and the
+  chord reaches the modal through `window.nodeTerminal.onMarkdownToggle` only while it is the top
+  dialog, while the canvas terminal AND editor nodes' own subscriptions refuse the chord whenever a
+  board is up (`lib/markdownChord.ts` `canvasOwnsMarkdownChord` — a hover flag can go stale under
+  the opaque board, so one press could otherwise flip both). The header also carries the node's
+  pause chips — DROPPED, PAUSED and SLEEPING (Eco, with the refused-wake sentence) — each clicking
+  through the same `wakeHibernatedNode` trigger as the canvas chip. The overlay sits at z 5 in the pane, BELOW the
+  sheet's resize handles (z 6/7, issue #389) — pinned in `styles.kanban.test.ts`.
   **The 💬 icon means COMMENTS on both surfaces** (repurposed from the markdown view — ⌘M still
-  toggles markdown/chat on the canvas node): on a terminal node it opens a right-side comments
+  toggles markdown/chat on the canvas node, and on the card modal): on a terminal node it opens a right-side comments
   flyout (`.term-node__comments`, a sibling of the overflow:hidden root, hosting BoardLogPanel
   with `card: Pick<KanbanSession,'id'>`); in the modal it collapses/reopens the panel, which is
   OPEN BY DEFAULT there. Under the modal header sits the **card metadata strip** (`CardMetaBar.tsx`): Members (assign) —

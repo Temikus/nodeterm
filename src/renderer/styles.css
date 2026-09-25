@@ -2934,6 +2934,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 5px 10px;
   font-size: 11px;
   color: var(--muted);
@@ -2943,6 +2944,66 @@ body,
 
 .term-md__hint {
   opacity: 0.8;
+}
+
+.term-md__title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.term-md__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ↻ re-capture — same shape as the node header's small icon buttons. */
+.term-md__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.term-md__refresh svg {
+  width: 13px;
+  height: 13px;
+}
+
+.term-md__refresh:hover:not(:disabled) {
+  background: rgba(var(--tint-rgb), 0.1);
+  color: var(--text);
+}
+
+.term-md__refresh:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* "Capturing…" / "Nothing captured…" / a failed capture or render — a sentence, not rendered output. */
+.term-md__content--placeholder {
+  color: var(--muted);
+}
+
+/* The kanban card modal lays the same ⌘M face over its live viewer (the pane anchors it). z 5, NOT
+   higher: the pane is flush with the sheet's edges and shares its stacking context with the resize
+   handles (`.kanban-modal__resize`, z 6 edge strips / z 7 corners, issue #389) — anything above 6
+   covers them and resize dies while the view is open. 5 still covers the viewer's floating bits:
+   the copy pill (z 5) loses to this later DOM sibling, the upload note is z 4, and the FindBar is
+   closed while the view covers the terminal. */
+.kanban-modal__pane > .term-md,
+.kanban-modal__pane > .term-chat {
+  z-index: 5;
 }
 
 .term-md__content {

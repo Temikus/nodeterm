@@ -14,6 +14,7 @@ import { effectiveAccountId } from '../../lib/accountChip'
 import { readsClaudeTranscript } from '../../lib/transcriptGates'
 import { liveProjectJumpTarget } from '../../lib/projectJump'
 import { terminalChordBubbles, terminalShortcutPolicy } from '../../lib/keybindingOverrides'
+import { focusXtermUnlessCovered, useMdModeFocus } from '../../terminal/useMdModeFocus'
 import { FindBar } from '../FindBar'
 import { useAgentStatus } from '../../state/agentStatus'
 import { useProjects } from '../../state/projects'
@@ -84,9 +85,17 @@ interface ModalTerminalProps {
   /** The modal header's 🔍 toggle — the FindBar renders inside this pane. */
   searchOpen: boolean
   onCloseSearch: () => void
+  /**
+   * The card modal's ⌘M view (output markdown / ChatPanel) is laid OVER this viewer. It stays
+   * mounted underneath — its co-attach is a second pty client whose attach/detach is expensive and
+   * must not churn — so it only has to stop holding the keyboard: blur on cover, restore on uncover
+   * when it had focus, and never take focus while covered (the async attach below focuses on
+   * completion, which a quick ⌘M can precede). Same rules as the canvas node's ⌘M face.
+   */
+  covered?: boolean
 }
 
-export function ModalTerminal({ nodeId, spawn, searchOpen, onCloseSearch }: ModalTerminalProps) {
+export function ModalTerminal({ nodeId, spawn, searchOpen, onCloseSearch, covered = false }: ModalTerminalProps) {
   const { api } = useSession()
   const hostRef = useRef<HTMLDivElement>(null)
   const middleClickPaste = useSettings((st) => st.settings.terminalMiddleClickPaste)
@@ -101,6 +110,9 @@ export function ModalTerminal({ nodeId, spawn, searchOpen, onCloseSearch }: Moda
   }, [middleClickPaste])
 
   const termRef = useRef<Terminal | null>(null)
+  const coveredRef = useRef(covered)
+  coveredRef.current = covered
+  useMdModeFocus(covered, () => termRef.current, () => hostRef.current?.closest('.kanban-modal'))
   const searchAddonRef = useRef<SearchAddon | null>(null)
   // The live pty session + its fit addon, reachable from OUTSIDE the lifecycle effect's closure —
   // the appearance effect below has to re-fit and re-REPORT this viewer's grid, and under co-attach
@@ -400,7 +412,7 @@ export function ModalTerminal({ nodeId, spawn, searchOpen, onCloseSearch }: Moda
       ro.observe(hostRef.current!)
       cleanups.push(() => ro.disconnect())
       transport.resize(res.sessionId, term.cols, term.rows)
-      term.focus()
+      focusXtermUnlessCovered(term, coveredRef.current)
     })()
 
     return () => {
