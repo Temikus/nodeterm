@@ -264,6 +264,11 @@ export function initStandingHost(
   async function connectOne(): Promise<void> {
     if (!running || opening || pendingCount() >= TARGET_PENDING) return
     opening = true
+    // Only a SUCCESSFUL attempt may chain straight into the next one. A failed one has armed
+    // scheduleReconnect()'s backoff, and chaining anyway made that backoff dead code: a host whose
+    // mint was refused re-minted at its own round-trip time (~175 ms, 35k 429s/day in the relay
+    // API log, 2026-09-25) instead of waiting 1 s → 15 s.
+    let opened = false
     try {
       const entitlement = getStoredEntitlement() // null on free tier → mint by deviceId
       // The host key is the identity every paired phone PINNED. If the OS keyring is locked we
@@ -328,6 +333,7 @@ export function initStandingHost(
         }
       })
       pool.add(pooled)
+      opened = true
       scheduleRefreshFor(pooled, token.exp)
       // A listener is registered at the relay → advertise the identity for LATE ADOPTION
       // (~/.nodeterm/relay.json — see relay-advertise.ts): a phone whose pairing predates the
@@ -344,7 +350,7 @@ export function initStandingHost(
     } finally {
       opening = false
       // If we're still short (e.g. TARGET_PENDING > 1, or one was consumed while minting), continue.
-      if (running && pendingCount() < TARGET_PENDING) queueMicrotask(() => void connectOne())
+      if (opened && running && pendingCount() < TARGET_PENDING) queueMicrotask(() => void connectOne())
     }
   }
 

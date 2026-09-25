@@ -292,3 +292,28 @@ describe('standing phone approval lifecycle (#819)', () => {
     expect(sessions[0].session.approve).not.toHaveBeenCalled()
   })
 })
+
+describe('standing host: a refused token mint backs off', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does NOT re-mint in a tight loop when the API refuses (429)', async () => {
+    // Field evidence (relay API log, 2026-09-25): one free host hit /v1/relay/host-token every
+    // ~175 ms — its own round-trip time — 35k 429s in a day. connectOne()'s `finally` topped the
+    // pool back up on a microtask even after a FAILED mint, so the backoff scheduleReconnect()
+    // had just armed never got a chance to run.
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const host = makeHost()
+    host.syncFromSettings()
+    for (let i = 0; i < 20; i++) await settle()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // The backoff then retries — refusal is not a permanent stop.
+    await vi.advanceTimersByTimeAsync(1000)
+    for (let i = 0; i < 5; i++) await settle()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    host.stop()
+  })
+})
