@@ -1482,6 +1482,41 @@ describe('SshProjectManager', () => {
       expect(onStatus).toHaveBeenCalledWith({ projectId: 'p1', status: 'connected', hookTunnelVerified: true })
     })
 
+    it('ONE failed probe never raises the banner — neither when the repair heals it nor when the next probe does', async () => {
+      // Field report (Linux desktop → Mac on the same desk, no sleep): "Agent status and canvas
+      // control lost their verified connection" kept appearing. The probe is one `curl -m 5` over
+      // the shared master, and a single slow round trip used to put the banner up by itself.
+      let dead = 0
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const mgr = makeVerifiedMgr(vi.fn(), () => (dead-- > 0 ? '000' : '204'))
+      const onStatus = (mgr as unknown as { r: { onStatus: ReturnType<typeof vi.fn> } }).r.onStatus
+      await mgr.connect('p1', conn, '/remote/cwd')
+      // (a) probe fails once, the repair's own verify succeeds → healed silently.
+      dead = 1
+      await mgr.connect('p1', conn, '/remote/cwd')
+      // (b) probe AND repair fail once, the next tick's probe answers → still silent.
+      dead = 3 // the probe + both of setup()'s verify attempts
+      await mgr.connect('p1', conn, '/remote/cwd')
+      await mgr.connect('p1', conn, '/remote/cwd')
+      expect(onStatus.mock.calls.filter(([e]) => e.hookTunnelVerified !== undefined)).toEqual([])
+      // …but every failure is logged with its cause, the only field evidence there is.
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('hook tunnel probe failed'))).toEqual([
+        '[ssh-project] hook tunnel probe failed for p1 (#1): unexpected HTTP answer (exit 0, http 000)',
+        '[ssh-project] hook tunnel probe failed for p1 (#1): unexpected HTTP answer (exit 0, http 000)'
+      ])
+    })
+
+    it('TWO consecutive failed probes raise the banner, even while the repair is backing off', async () => {
+      const mgr = makeVerifiedMgr(vi.fn(), () => '000')
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const onStatus = (mgr as unknown as { r: { onStatus: ReturnType<typeof vi.fn> } }).r.onStatus
+      await mgr.connect('p1', conn, '/remote/cwd') // establish fails verification → no spec
+      await mgr.connect('p1', conn, '/remote/cwd') // failure #1 → repair attempted, fails
+      expect(onStatus.mock.calls.filter(([e]) => e.hookTunnelVerified === false)).toHaveLength(0)
+      await mgr.connect('p1', conn, '/remote/cwd') // failure #2 → inside backoff, still reported
+      expect(onStatus.mock.calls.filter(([e]) => e.hookTunnelVerified === false)).toHaveLength(1)
+    })
+
     it('rebinds the forward on repair — the endpoint is re-advertised, not merely re-probed', async () => {
       // The whole failure is a master with no `-R`, so a repair that did not call `-O forward`
       // would leave every hook POST dying exactly as before while reporting success.
