@@ -5,6 +5,7 @@ import { useAgentStatus } from '../state/agentStatus'
 import { useSession } from '../session/session'
 import type { ChatMessage } from '@shared/types'
 import { chipFor } from '../lib/keybindingOverrides'
+import { canSendFromChat, chatComposerPlaceholder } from '../lib/chatSendGate'
 import { E_UNSUPPORTED } from '@shared/rpc'
 
 // Memoized bubble: marked+DOMPurify re-ran for EVERY message on each ChatPanel render (each
@@ -127,11 +128,15 @@ export function ChatPanel({
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  const working = state === 'working'
+  // Not just `working`: in `waiting`/`blocked` the pane holds a TUI dialog this view does not show,
+  // and sendText's Enter would ANSWER it (see lib/chatSendGate.ts).
+  const sendRefused = !canSendFromChat(state)
 
   const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || working) return
+    // Read the store at SEND time, not the render-time `state`: a PermissionRequest that landed
+    // between the last render and this keypress must still block, or the Enter answers the dialog.
+    if (!text || !canSendFromChat(useAgentStatus.getState().byId[nodeId]?.state)) return
     const ok = await api.pty.sendText(nodeId, text)
     if (ok === 'pasted-not-submitted') {
       window.dispatchEvent(new CustomEvent('nodeterm:toast', { detail: { kind: 'error', message: TEXT_NOT_SUBMITTED } }))
@@ -145,7 +150,7 @@ export function ChatPanel({
     // Optimistic: show the prompt immediately; the next load() reconciles from the transcript.
     setMessages((m) => [...m, { role: 'user', parts: [{ kind: 'text', text }] }])
     setInput('')
-  }, [api, input, working, nodeId])
+  }, [api, input, nodeId])
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
@@ -203,14 +208,8 @@ export function ChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={
-            readonly
-              ? "Can't write to this session"
-              : working
-                ? 'Claude is working…'
-                : 'Message Claude…  (Enter to send)'
-          }
-          disabled={readonly || working}
+          placeholder={chatComposerPlaceholder({ readonly, state, chip: mdChip })}
+          disabled={readonly || sendRefused}
           rows={2}
         />
       </div>

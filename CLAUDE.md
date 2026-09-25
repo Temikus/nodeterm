@@ -2333,6 +2333,12 @@ command-bearing opens; this does not add a human-confirm dialog or change mobile
   its `contextTail`, the hook-fed path authority). The browser's real reader is
   `buildTranscriptApi` in ws-bridge — deliberately NOT folded into `buildClaudeApi`, which the
   relay shares and must not adopt it.
+  **The composer sends only in `done` or an unknown state** (`canSendFromChat`,
+  `renderer/lib/chatSendGate.ts`) — never in `waiting`/`blocked`, not just never in `working`:
+  PermissionRequest and AskUserQuestion both normalize to `waiting`, the pane then holds a TUI
+  select dialog this view does not show, and `sendText`'s Enter would ANSWER it ("Yes" is the
+  default highlight). The state is re-read from the store at send time, not only at render. Same
+  trap as the in-place restart's `/exit`.
 - **Subagent visualization** (agents in `SUBAGENT_CAPABLE`) — `subagent-start`/`subagent-end`
   normalized events (from Claude's `PreToolUse`/`PostToolUse` on tool `Agent`/`Task`, correlated
   by `tool_use_id`) drive a transient `state/agentNodes.ts` store. Claude launches subagents
