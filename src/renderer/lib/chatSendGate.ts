@@ -64,8 +64,8 @@ export function canSendFromChat(agentId: string, s: ChatGateStatus): boolean {
  * the action instead of promising a chord that never fires. A shell-owned pane names the header
  * chip that resumes it — the same SLEEPING / PAUSED / DROPPED chip whose click runs the wake, shown
  * in the header of the canvas node and of the kanban card modal alike (hence "the header"). An
- * exited CLI has no such chip: it is relaunched in the terminal itself. A write failure (`readonly`) outranks everything: no state change will
- * make that session writable.
+ * exited CLI has no such chip: it is relaunched in the terminal itself. A write failure
+ * (`readonly`) outranks everything: no state change will make that session writable.
  */
 export function chatComposerPlaceholder({
   readonly,
