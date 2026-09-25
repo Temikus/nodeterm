@@ -4,8 +4,6 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectKanban } from '@shared/types'
 import { pushDialog, popDialog, resetDialogStack } from '../dialog-stack'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { useAgentStatus } from '../../state/agentStatus'
 import { CardModal } from './CardModal'
 import type { KanbanSession } from './KanbanView'
@@ -617,12 +615,15 @@ describe('CardModal', () => {
       act(() => root.unmount())
     })
 
-    it('the view is per card: switching cards does not carry it onto the next one', () => {
+    it('the view is per opening: switching cards neither carries it over nor brings it back (A → B → A)', () => {
       const root = createRoot(host)
       render(root, termSession({ agentId: undefined, spawn: {} }))
       act(() => toggle().click())
       expect(document.body.querySelector('.md-view-mock')).toBeTruthy()
       render(root, termSession({ id: 'node-md-2', agentId: undefined, spawn: {} }))
+      expect(document.body.querySelector('.md-view-mock')).toBeNull()
+      // …and it is per OPENING: coming back to the first card shows its live terminal again.
+      render(root, termSession({ agentId: undefined, spawn: {} }))
       expect(document.body.querySelector('.md-view-mock')).toBeNull()
       act(() => root.unmount())
     })
@@ -635,17 +636,6 @@ describe('CardModal', () => {
       act(() => toggle().click())
       expect(search().disabled).toBe(true)
       act(() => root.unmount())
-    })
-
-    it('the canvas node refuses the chord while a board is up (no double toggle under the modal)', () => {
-      // Source pin: TerminalNode is a 6000-line component that cannot be mounted here. Its hover
-      // flag can be stale under the opaque board, so the refusal must stay in its subscription.
-      const src = readFileSync(resolve(__dirname, '../../nodes/TerminalNode.tsx'), 'utf8').replace(/\r\n/g, '\n')
-      const at = src.indexOf('window.nodeTerminal.onMarkdownToggle(')
-      expect(at).toBeGreaterThan(0)
-      const body = src.slice(at, at + 400)
-      expect(body).toMatch(/isGlobalKanbanOpen\(\) \|\| isKanbanOpen\(/)
-      expect(body.indexOf('isGlobalKanbanOpen')).toBeLessThan(body.indexOf('updateNodeData'))
     })
   })
 })

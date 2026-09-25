@@ -175,6 +175,7 @@ import { WakeInputBuffer } from '../terminal/wake-input-buffer'
 import { FindBar } from '../components/FindBar'
 import { TerminalMarkdownView } from './TerminalMarkdownView'
 import { focusXtermUnlessCovered, useMdModeFocus } from '../terminal/useMdModeFocus'
+import { canvasOwnsMarkdownChord } from '../lib/markdownChord'
 import { IconChat, IconChevronDown, IconChevronRight, IconClose, IconEye, IconEyeOff, IconGrid, IconMic, IconMoveTo, IconPlay, IconReload, IconSearch, IconSparkle } from '../components/icons'
 import { NodeLabels } from '../components/kanban/NodeLabels'
 import { Tooltip } from '../components/Tooltip'
@@ -5278,14 +5279,11 @@ export function TerminalNode({
     }
   }, [id, canReadTitleNode, status?.sessionId, data.titleAuto, updateNodeData])
 
-  // Cmd/Ctrl+M toggles markdown view of this terminal's output (only when hovered). NOT while a
-  // board covers the canvas: the kanban card modal owns the chord then (its own ⌘M view), and a
-  // hover flag can be stale under the opaque board — the pointer never "left" a node that was
-  // covered while hovered, so one press would flip the hidden node AND the modal.
+  // Cmd/Ctrl+M toggles markdown view of this terminal's output — only when hovered, and never while
+  // a board is up (the card modal owns the chord there; see `canvasOwnsMarkdownChord`).
   useEffect(() => {
     return window.nodeTerminal.onMarkdownToggle(() => {
-      if (!hoveredRef.current) return
-      if (isGlobalKanbanOpen() || isKanbanOpen(useProjects.getState().activeProjectId ?? '')) return
+      if (!canvasOwnsMarkdownChord(hoveredRef.current, isGlobalKanbanOpen() || isKanbanOpen(useProjects.getState().activeProjectId ?? ''))) return
       updateNodeData(id, (n) => ({ mdMode: !n.data.mdMode }))
     })
   }, [id, updateNodeData])

@@ -111,6 +111,12 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
   // a bare boolean would carry the open view onto the next card the user opens).
   const [mdFor, setMdFor] = useState<string | null>(null)
   const mdOpen = isTerminal && mdFor === session.id
+  // Per OPENING, not sticky per card: showing another card resets it, so A → B → A comes back to
+  // A's live terminal. (The id key above is what keeps the render between the switch and this
+  // reset from flashing the view onto the new card.)
+  useEffect(() => {
+    setMdFor(null)
+  }, [session.id])
   const toggleMd = useCallback(() => {
     setMdFor((cur) => (cur === session.id ? null : session.id))
     setSearchOpen(false) // the FindBar searches the xterm the view now covers
