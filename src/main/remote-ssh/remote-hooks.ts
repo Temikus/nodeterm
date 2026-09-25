@@ -54,6 +54,7 @@ import {
   mergeInstructionsBlock
 } from '../../core/context-link-core'
 import { posixQuote, type SshConnection } from '../../shared/ssh'
+import { describeTunnelProbe } from './tunnel-repair'
 
 /** POSIX dirname of an absolute remote path. `path.dirname` would apply the LOCAL separator
  *  rules, which is wrong the moment the desktop is Windows and the host is Linux. */
@@ -128,10 +129,16 @@ export class RemoteHooks {
    * run, which is a tunnel that cannot deliver, not an unknown. The caller repairs by re-running
    * `setup()`, which is idempotent and re-verifies end-to-end.
    */
-  async tunnelAlive(projectId: string, conn: SshConnection, controlPath: string, token: string): Promise<boolean> {
+  async tunnelAlive(
+    projectId: string,
+    conn: SshConnection,
+    controlPath: string,
+    token: string
+  ): Promise<{ alive: boolean; detail: string }> {
     const spec = this.specs.get(projectId)
-    if (!spec || !token) return false
-    return this.verifyTunnel(conn, controlPath, spec.sock, token)
+    if (!spec) return { alive: false, detail: 'no forward registered for this project in this app run' }
+    if (!token) return { alive: false, detail: 'no hook token' }
+    return this.probeTunnel(conn, controlPath, spec.sock, token)
   }
 
   async setup(
@@ -928,6 +935,16 @@ export class RemoteHooks {
     sock: string,
     token: string
   ): Promise<boolean> {
+    return (await this.probeTunnel(conn, controlPath, sock, token)).alive
+  }
+
+  /** `verifyTunnel` with the reason kept: the watchdog logs WHY a live tunnel stopped answering. */
+  private async probeTunnel(
+    conn: SshConnection,
+    controlPath: string,
+    sock: string,
+    token: string
+  ): Promise<{ alive: boolean; detail: string }> {
     try {
       const cmd =
         `curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST --unix-socket ${posixQuote(sock)} ` +
@@ -946,9 +963,10 @@ export class RemoteHooks {
         childArgs(conn, controlPath, cmd),
         curlHeaderConfigLine('x-nodeterm-hook-token', token)
       )
-      return r.code === 0 && r.stdout.trim() === '204'
-    } catch {
-      return false
+      const alive = r.code === 0 && r.stdout.trim() === '204'
+      return { alive, detail: alive ? 'ok' : describeTunnelProbe(r.code, r.stdout) }
+    } catch (e) {
+      return { alive: false, detail: `probe threw: ${e instanceof Error ? e.message : String(e)}` }
     }
   }
 

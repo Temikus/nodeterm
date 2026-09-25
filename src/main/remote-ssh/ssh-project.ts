@@ -56,6 +56,7 @@ import { RemoteHooks } from './remote-hooks'
 import {
   recordTunnelRepair,
   shouldAttemptTunnelRepair,
+  shouldReportTunnelLost,
   type TunnelRepairState
 } from './tunnel-repair'
 
@@ -454,6 +455,9 @@ export class SshProjectManager {
    *  re-installed on every watchdog tick. See `tunnel-repair.ts` for why the first one is free. */
   private tunnelRepair = new Map<string, TunnelRepairState>()
   private lostHookTunnels = new Set<string>()
+  /** Consecutive failed liveness probes per project — the banner waits for a second one
+   *  (`shouldReportTunnelLost`); a single slow probe is not a lost tunnel. */
+  private tunnelProbeFailures = new Map<string, number>()
 
   private hookTunnelHealth(projectId: string, verified: boolean): void {
     if (verified) {
@@ -491,25 +495,39 @@ export class SshProjectManager {
       const hook = this.r.getHook()
       // No hook server yet ⇒ nothing to point at, and `setup()` would refuse anyway.
       if (!hook?.port || !hook.token) return
-      const alive = await this.remoteHooks.tunnelAlive(projectId, existing.conn, existing.controlPath, hook.token)
+      const probe = await this.remoteHooks.tunnelAlive(projectId, existing.conn, existing.controlPath, hook.token)
       if (this.conns.get(projectId) !== existing) return
-      if (alive) {
+      if (probe.alive) {
         this.tunnelRepair.delete(projectId)
+        this.tunnelProbeFailures.delete(projectId)
         this.hookTunnelHealth(projectId, true)
         return
       }
-      this.hookTunnelHealth(projectId, false)
+      const failures = (this.tunnelProbeFailures.get(projectId) ?? 0) + 1
+      this.tunnelProbeFailures.set(projectId, failures)
+      // Logged on every failure, not only the reported ones: this line is the only field evidence
+      // of WHY a tunnel stopped answering (dead listener vs slow master vs refused ssh).
+      console.warn(`[ssh-project] hook tunnel probe failed for ${projectId} (#${failures}): ${probe.detail}`)
       const now = Date.now()
-      if (!shouldAttemptTunnelRepair(this.tunnelRepair.get(projectId), now)) return
+      if (!shouldAttemptTunnelRepair(this.tunnelRepair.get(projectId), now)) {
+        if (shouldReportTunnelLost(failures)) this.hookTunnelHealth(projectId, false)
+        return
+      }
       const res = await this.remoteHooks.setup(projectId, existing.conn, existing.controlPath, hook)
       this.tunnelRepair.set(projectId, recordTunnelRepair(this.tunnelRepair.get(projectId), !!res, now))
-      if (!res) return
+      if (!res) {
+        if (this.conns.get(projectId) === existing && shouldReportTunnelLost(failures)) {
+          this.hookTunnelHealth(projectId, false)
+        }
+        return
+      }
       // Ownership re-check: `setup()` is several round-trips, and a disconnect + reconnect inside
       // that window means this entry is no longer the live one — the same rule the establish path
       // applies before rebuilding a master. Writing the endpoint onto a superseded entry would
       // point sessions at a socket belonging to a connection nobody holds.
       if (this.conns.get(projectId) !== existing) return
       existing.hookEndpointPath = res.endpointPath
+      this.tunnelProbeFailures.delete(projectId)
       this.hookTunnelHealth(projectId, true)
       // Same contract as the establish path: hook events lost while the tunnel was down are gone
       // for good, so the working agents need a resync. Fire-and-forget behind a catch — a repair
@@ -897,6 +915,9 @@ export class SshProjectManager {
           continue
         }
         const hookEndpointPath = res?.endpointPath
+        // A fresh establish starts a fresh probe streak: a failure before this reconnect and one
+        // after it are not two opinions about the same tunnel.
+        if (res) this.tunnelProbeFailures.delete(projectId)
         // Resolve the remote $HOME once and retain it (the hook setup above also learns it but
         // doesn't surface it). Phase 2b uses it to jail remote transcript reads. Fail-open: an
         // unresolved home just disables the remote context meter / subagent transcript / search.
@@ -2433,6 +2454,7 @@ export class SshProjectManager {
     }
     // Cancel the reverse hook tunnel (over the still-live master) BEFORE tearing the master down.
     await this.remoteHooks.teardown(projectId, c.conn, c.controlPath)
+    this.tunnelProbeFailures.delete(projectId)
     void this.r.run(exitMasterArgs(c.conn, c.controlPath))
     c.master.kill()
     this.conns.delete(projectId)
