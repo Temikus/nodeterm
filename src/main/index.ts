@@ -4215,11 +4215,12 @@ app.whenReady().then(async () => {
     }, PREWARM_START_MS)
   }
   // Wake-from-sleep: re-validate every SSH master NOW instead of letting ServerAlive discover the
-  // dead TCP ~60s later — until it does, every remote terminal looks alive and is dead (no echo,
-  // no scroll). The small delay lets the network interface come back up first; connect() is
-  // idempotent so a master that survived the nap is a cheap `-O check` no-op.
+  // dead TCP ~60-75s later — until it does, every remote terminal looks alive and is dead (no
+  // echo, no scroll). The small delay lets the network interface come back up first. `roundTrip`
+  // is the load-bearing part: `-O check` alone answers "Master running" for a master whose TCP
+  // died in the sleep (measured), so without a real round trip this pass was a no-op.
   powerMonitor.on('resume', () => {
-    setTimeout(() => void sshProjectManager?.revalidateAll(), 2000)
+    setTimeout(() => void sshProjectManager?.revalidateAll({ roundTrip: true }), 2000)
   })
   // While connected, poll each SSH project's server file: the mobile companion appends the
   // sessions it starts to <remoteCwd>/.nodeterm/project.json, and this is how those nodes reach

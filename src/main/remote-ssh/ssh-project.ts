@@ -43,6 +43,7 @@ import {
   mkDirArgs,
   exitMasterArgs,
   checkMasterArgs,
+  masterRoundTripArgs,
   remoteTmuxKillArgs,
   remoteTmuxKillEverySocketArgs,
   childArgs,
@@ -103,6 +104,12 @@ interface Runners {
   }
   /** Run a one-shot ssh, resolving its stdout + exit code; optional stdin written to the child. */
   run: (args: string[], stdin?: string) => Promise<{ code: number; stdout: string }>
+  /** Run a one-shot ssh with a hard timeout, OUTSIDE the per-master child gate, and say only
+   *  whether it finished in time. Used by the wake-from-sleep liveness probe: after a sleep the
+   *  gate is often full of children hung on the dead master, and a probe queued behind them would
+   *  measure the queue, not the master. Optional: without it the wake pass falls back to the
+   *  `-O check`-only revalidate it did before. */
+  probe?: (args: string[], timeoutMs: number) => Promise<'answered' | 'timeout'>
   /** Run a one-shot scp (file upload over the master); resolves its exit code. */
   runScp: (args: string[]) => Promise<{ code: number }>
   /** Live loopback hook-server coordinates (injected so the manager stays testable). */
@@ -217,6 +224,12 @@ const MASTER_STDERR_CAP = 8 * 1024
  *  per connected project, no new TCP/auth, so this can afford to be brisk; 45s bounds how
  *  long exec polls can churn direct-fallback connections after an unnoticed master death. */
 const MASTER_WATCHDOG_MS = 45_000
+
+/** Budget for the wake-from-sleep round trip (`dropMasterIfHalfDead`). A healthy master answers a
+ *  mux'd `true` in a couple of RTTs plus the remote shell's startup; a half-dead one never
+ *  answers. Generous on purpose: a false conviction costs every terminal of the project a
+ *  reconnect, a late one only a few more seconds of frozen screen — against ~74 s without it. */
+const WAKE_ROUND_TRIP_TIMEOUT_MS = 10_000
 
 /** How long connect() waits for `-O check` to answer when nothing is blocking on a human.
  *
@@ -1658,7 +1671,7 @@ export class SshProjectManager {
    * 'connected' flush respawns the dead nodes. Failures just leave the normal status-event
    * error path in charge (connect reports it before throwing).
    */
-  async revalidateAll(): Promise<void> {
+  async revalidateAll(opts?: { roundTrip?: boolean }): Promise<void> {
     // Per project CONCURRENTLY, not serially: a re-establish can park on the askpass passphrase
     // prompt for up to PROMPT_WAIT_MS (5 min), and a serial pass wedged EVERY other project's
     // check behind it for that whole window - the direct-fallback churn the watchdog exists to
@@ -1673,6 +1686,7 @@ export class SshProjectManager {
         // established for the NEW endpoint, silently reverting the project to the old host.
         const e = this.conns.get(projectId)
         if (!e) return // disconnected while the pass was being set up
+        if (opts?.roundTrip) await this.dropMasterIfHalfDead(projectId, e)
         try {
           await this.connect(projectId, e.conn, e.remoteCwd)
         } catch {
@@ -1680,6 +1694,42 @@ export class SshProjectManager {
         }
       })
     )
+  }
+
+  /**
+   * Wake-from-sleep only: end a master that answers `-O check` but can no longer reach sshd.
+   *
+   * The reuse branch of `connect()` trusts `-O check`, and after a sleep that is exactly the wrong
+   * witness — the master PROCESS is alive locally while its TCP is gone (measured: `-O check` exit
+   * 0 on a black-holed master, a mux'd command hanging until ServerAlive gave up ~74 s later). So
+   * the wake pass was a no-op, and for that minute+ every remote terminal kept its last screen
+   * while keys and the wheel went nowhere. Here a real round trip is timed instead; on a TIMEOUT
+   * the master is sent `-O exit`, which the process serves locally and at once (measured: 5 ms,
+   * every mux'd terminal client exiting 255 in the same instant). Those 255s feed the renderer's
+   * SshReconnector, and the `connect()` that follows in `revalidateAll` finds the check failing
+   * and re-establishes, so the terminals respawn onto a fresh master seconds after wake.
+   *
+   * Only a timeout convicts. A probe that finished — with any exit code — reached a verdict
+   * without hanging, so the master is not the half-dead kind this exists for; a fast failure
+   * (socket already gone, master already dead) is `connect()`'s normal job. Skipped while a
+   * connect is in flight for the project: that attempt owns the master and may be mid-handshake.
+   */
+  private async dropMasterIfHalfDead(projectId: string, e: Conn): Promise<void> {
+    if (!this.r.probe || this.inFlight.has(projectId)) return
+    let verdict: 'answered' | 'timeout'
+    try {
+      verdict = await this.r.probe(masterRoundTripArgs(e.conn, e.controlPath), WAKE_ROUND_TRIP_TIMEOUT_MS)
+    } catch {
+      return // a probe that could not run proves nothing either way
+    }
+    if (verdict !== 'timeout') return
+    // Re-check ownership: a disconnect or endpoint change during the probe means this entry's
+    // master is no longer ours to end.
+    if (this.conns.get(projectId) !== e || this.inFlight.has(projectId)) return
+    console.warn(
+      `[ssh-project] master for ${sshHostKey(e.conn)} did not answer a round trip after wake; ending it so terminals reconnect`
+    )
+    await this.r.run(exitMasterArgs(e.conn, e.controlPath)).catch(() => {})
   }
 
   /** The connection's cached remote `--permission-mode auto` capability (undefined = not
@@ -2706,6 +2756,17 @@ export function initSshProject(
           }
         })
       ),
+    // Deliberately NOT through `sshChildGate`: after a sleep the gate is typically full of children
+    // hung on the very master this probes, and queueing behind them would time the queue.
+    probe: (args, timeoutMs) =>
+      new Promise((resolve) => {
+        execFile(
+          ssh,
+          args,
+          { timeout: timeoutMs, env: { ...process.env, ...appSshAgent.env() } },
+          (err) => resolve(err && (err as { killed?: boolean }).killed ? 'timeout' : 'answered')
+        )
+      }),
     runScp: (args) =>
       new Promise((resolve) => {
         // Same reason as `run`: scp re-authenticates when the master socket is gone.
