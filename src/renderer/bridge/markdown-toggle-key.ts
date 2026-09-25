@@ -15,15 +15,17 @@
 // surface but takes `onMarkdownToggle` from the LOCAL preload (`...local`), and the lazy install
 // means merely building the stub registers nothing.
 //
-// Semantics mirror the desktop intercept, with three deliberate additions:
+// Semantics mirror the desktop intercept:
 // - **terminal-first** stands it down while a terminal has focus (`policyStandsDown`, the SAME
 //   predicate main uses). Focus comes from the DOM exactly as the renderer's dispatcher decides
 //   it (`isTerminalTarget` — xterm's helper textarea), not from a mirror: there is nothing to
 //   mirror to in a browser, and the live answer is the only honest one.
 // - **auto-repeat is swallowed, never re-toggled**: a held chord would otherwise strobe the view.
-//   Still `preventDefault`ed so the held key keeps being ours (the ⌘0 intercept's shape).
-// - An event a child handler already claimed (`defaultPrevented`) is left alone, the same first
-//   rule `dispatchGlobalKeydown` applies.
+//   Still `preventDefault`ed so the held key keeps being ours — exactly what `keydownIntercept`
+//   does for a repeated toggle-markdown chord on the desktop (the held-⌘0 shape).
+// - One addition with no desktop counterpart: an event a child handler already claimed
+//   (`defaultPrevented`) is left alone, the same first rule `dispatchGlobalKeydown` applies (main
+//   sees the key before any page handler, so it has nothing to defer to).
 //
 // Bubble phase on purpose, like the window dispatcher: the Settings shortcut recorder's
 // `stopPropagation` on an armed capture is what keeps a chord being RECORDED from firing the

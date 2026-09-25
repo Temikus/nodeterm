@@ -151,7 +151,11 @@ export function keydownIntercept(
   // stays cheap on main's input path.
   const ev = toShortcutEvent(input)
   if (bindings.toggleMarkdown.some((s) => matchesShortcut(ev, s, isMac))) {
-    return { action: 'toggle-markdown' }
+    // A held chord is still CLAIMED (the menu's Minimize owns this accelerator, so letting a
+    // repeat through would minimize the window mid-hold) but forwards nothing: one press, one
+    // toggle — the rule the Server Edition's browser listener (`markdown-toggle-key.ts`) applies
+    // too, and the same shape as the held ⌘0 below.
+    return { action: input.isAutoRepeat ? null : 'toggle-markdown' }
   }
   // Repurpose Cmd/Ctrl+W: the renderer closes the selected node(s); if none are selected it asks
   // us to close the window (the standard behavior). ⇧ is left to the menu's Close All Windows —

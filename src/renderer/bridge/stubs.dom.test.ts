@@ -44,3 +44,38 @@ describe('bridge onMarkdownToggle (browser)', () => {
     un()
   })
 })
+
+describe('bridge onMarkdownToggle (browser) — terminal-first', () => {
+  it('stands down for a focused xterm textarea, read live from document.activeElement', () => {
+    useSettings.setState({
+      settings: { ...DEFAULT_SETTINGS, terminalShortcutPolicy: 'terminal-first' }
+    })
+    const ta = document.createElement('textarea')
+    ta.className = 'xterm-helper-textarea'
+    document.body.appendChild(ta)
+    const s = buildStubApi()
+    const cb = vi.fn()
+    const un = s.onMarkdownToggle(cb)
+    try {
+      ta.focus()
+      expect(document.activeElement).toBe(ta)
+      // Dispatched on the focused textarea so it bubbles to window like a real keystroke.
+      const e = new KeyboardEvent('keydown', {
+        key: 'm',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      ta.dispatchEvent(e)
+      expect(cb).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(false) // the chord stays with the shell
+      // Focus leaves the terminal: the same policy no longer stands it down.
+      ta.blur()
+      press({ key: 'm', ctrlKey: true })
+      expect(cb).toHaveBeenCalledTimes(1)
+    } finally {
+      un()
+      ta.remove()
+    }
+  })
+})
