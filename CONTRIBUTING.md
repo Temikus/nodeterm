@@ -368,6 +368,12 @@ lane unaffected.
   removing the class or adding a renderer wheel handler cannot implement guest zoom. The shared
   renderer controls call the same `@shared/webview-zoom` policy directly on the attached guest.
 
+- **Rendered markdown goes inside a listed container.** A link in `renderMarkdown` output keeps its
+  href as written, and a relative one used to navigate the whole app window away (the canvas was
+  gone until a reload). One delegated handler (`renderer/lib/markdownLinks.ts`) intercepts clicks
+  inside `RENDERED_MARKDOWN_CONTAINERS`; a new surface that injects markdown HTML must use one of
+  those classes or join the list — `markdownLinks.test.ts` fails otherwise.
+
 These are the ones that come up in review most often. Each exists because its absence caused a real
 bug.
 

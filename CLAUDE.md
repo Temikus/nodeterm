@@ -1539,6 +1539,29 @@ Monaco is wired in `renderer/editor/monaco-setup.ts` (language workers bundled v
 `?worker` — no CDN; CSP `worker-src` allows them). Markdown rendering is shared in
 `renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize).
 
+**A link in rendered markdown must never navigate the app window.** DOMPurify keeps an anchor's
+href as written, and agents write relative links constantly (`[pty-manager.ts](src/core/pty-manager.ts:4100)`).
+A click resolved it against the app document: on the desktop another `file://` path, which the old
+`will-navigate` guard ALLOWED ("any `file://` is ours"), so the main window navigated to a file that
+does not exist and the whole canvas was gone until a reload; in the Server Edition any `<a href>`
+click, relative or http(s), navigated the app's own tab away. Two layers now:
+- **Renderer, every surface** — ONE delegated, document-level click listener installed at boot
+  (`renderer/lib/markdownLinks.ts`, from `boot.tsx`), scoped by `RENDERED_MARKDOWN_CONTAINERS`
+  (`.term-md__content` — terminal ⌘M view + editor Preview, `.term-chat__text` — ChatPanel,
+  `.sticky-node__md` — sticky notes on canvas AND in the kanban card modal). http/https/mailto →
+  `shell.openExternal` (system browser / a new browser tab); `#fragment` and empty href → swallowed;
+  anything else → swallowed + an error toast (`nodeterm:toast` — the only kind Canvas renders).
+  Local links deliberately do NOT open a file: resolving one needs the owning node's cwd AND its
+  filesystem dialect (session source, core platform, SSH/relay — TerminalNode's `pathConvention`),
+  which a document-level handler cannot see; a wrong guess opens the wrong file on the wrong machine.
+  **A new markdown surface must render inside a listed container** — `markdownLinks.test.ts` fails
+  on a component that pipes `renderMarkdown` into `dangerouslySetInnerHTML` outside the list, and on
+  a listed class nothing renders any more.
+- **Main, desktop backstop** — `decideMainFrameNavigation` (`main/navigation-guard.ts`) allows a
+  main-frame navigation ONLY to the entry document itself (scheme + host + decoded pathname; hash
+  and query ignored, so reload and dev HMR work); a safe external scheme goes to the OS; everything
+  else — any other `file://` path, any other dev-server path — is blocked.
+
 ### Webview keep-alive across project switches (browser/web nodes)
 
 Issue #301: a project switch used to reload every browser node's page — SPA state, forms, scroll,
