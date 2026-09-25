@@ -2145,3 +2145,49 @@ describe('ssh mirror: an optimistically-acked write that never lands must not re
     })
   }
 })
+
+describe('localOnly save (the launch write-ahead barrier)', () => {
+  const sshConn = { server: { host: 'h', user: 'u' } as any, remoteCwd: '~/app' }
+  const makeIo = () => {
+    const remote: Record<string, string> = {}
+    const calls: string[] = []
+    const io = {
+      read: async (id: string) => (calls.push(`read:${id}`),
+        remote[id] != null ? { status: 'ok' as const, content: remote[id] } : { status: 'absent' as const }),
+      write: async (id: string, _s: any, c: string) => (calls.push(`write:${id}`), (remote[id] = c), true)
+    }
+    return { io, remote, calls }
+  }
+  const withNodes = (ids: string[]) => project({
+    id: 'ps', ssh: sshConn, cwd: undefined,
+    nodes: ids.map((id) => ({ id, kind: 'terminal' as const, position: { x: 0, y: 0 }, size: { width: 1, height: 1 }, title: 't', color: '#fff', group: null }))
+  })
+
+  it('touches no ssh host, persists the cache to the local index, and the next ordinary save mirrors it', async () => {
+    const { io, remote, calls } = makeIo()
+    const store = new WorkspaceStore(io)
+    await store.save(ws([withNodes(['term-1'])])) // reconciled + mirrored
+    calls.length = 0
+
+    await store.save(ws([withNodes(['term-1', 'term-2'])]), { localOnly: true })
+    expect(calls).toEqual([])
+    const index = JSON.parse(await fs.readFile(path.join(userData, 'workspace.json'), 'utf-8'))
+    const entry = index.entries.find((e: { id: string }) => e.id === 'ps')
+    expect(entry.cache.nodes.map((n: { id: string }) => n.id)).toEqual(['term-1', 'term-2'])
+    expect(JSON.parse(remote['ps']).nodes.map((n: { id: string }) => n.id)).toEqual(['term-1'])
+
+    // Unchanged content — only the owed mirror can make this save write.
+    await store.save(ws([withNodes(['term-1', 'term-2'])]))
+    expect(calls.some((c) => c === 'write:ps')).toBe(true)
+    expect(JSON.parse(remote['ps']).nodes.map((n: { id: string }) => n.id)).toEqual(['term-1', 'term-2'])
+  })
+
+  it('never blind-writes an unreconciled entry: it is left for the next ordinary save to read first', async () => {
+    const { io, calls } = makeIo()
+    const store = new WorkspaceStore(io)
+    await store.save(ws([withNodes(['term-1'])]), { localOnly: true })
+    expect(calls).toEqual([])
+    await store.save(ws([withNodes(['term-1'])]))
+    expect(calls[0]).toBe('read:ps')
+  })
+})

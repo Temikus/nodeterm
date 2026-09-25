@@ -2736,7 +2736,13 @@ command-bearing opens; this does not add a human-confirm dialog or change mobile
   omit that initial command rather than converting it to durable intent. A parked-project deferral before any input
   retains never-attempted intent and can proceed on activation without a retry timer.
   New intent has `attempted:false`; the writer awaits a workspace save of
-  `attempted:true, manualOnly:true` before input, then rechecks the shell after that save. A warm
+  `attempted:true, manualOnly:true` before input, then rechecks the shell after that save. That
+  save is **`localOnly`** (`WorkspaceStore.save`): durable in this machine's index, with no SSH
+  read/reconcile/mirror — a changed entry is marked `unmirrored` and the next ordinary save pushes
+  it. Awaiting the mirror put two SSH round trips in front of every new agent on an SSH project.
+  A node's own first-open delivery (live `initialCommand`, no deps, no failure record) shows NO
+  QUEUED chip: its `pendingLaunch` is only the write-ahead record, and it carries `manualOnly`
+  from the claim until Enter lands, which painted "⚠ QUEUED" on every freshly opened agent. A warm
   attach may automatically deliver never-attempted intent, preserving long-running `--after`
   graphs through project switches/park expiry. Attempted/legacy-unknown intent stays manual: its
   clearing autosave may have been lost after Enter. Explicit Run now rechecks the foreground shell and

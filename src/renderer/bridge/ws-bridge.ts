@@ -61,7 +61,8 @@ import {
   type TmuxStatus,
   type TranscriptLine,
   type Workspace,
-  type WorkspaceApi
+  type WorkspaceApi,
+  type WorkspaceSaveOptions
 } from '../../shared/types'
 import type { PeerIdentity } from '../../shared/presence'
 import type { PaneOwner } from '../../shared/agents/pane-owner-predicate'
@@ -305,7 +306,7 @@ export function buildRealApi(
 
   const workspace: WorkspaceApi = {
     load: () => client.request(IPC.workspaceLoad) as Promise<Workspace>,
-    save: (ws: Workspace) => client.request(IPC.workspaceSave, ws) as Promise<void>,
+    save: (ws: Workspace, opts?: WorkspaceSaveOptions) => client.request(IPC.workspaceSave, ws, opts) as Promise<void>,
     // REAL: WorkspaceStore (core) registers IPC.workspaceProbeFolder, so the server serves it.
     // Stubbing it to `null` meant "Open folder…" on a repo that already carries a committed
     // .nodeterm/project.json concluded there was no project there, created an EMPTY one, and the

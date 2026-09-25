@@ -1063,9 +1063,16 @@ export interface PtyApi {
 
 export type WorkspaceMigrationKind = 'v2' | 'exec'
 
+export interface WorkspaceSaveOptions {
+  localOnly?: boolean
+}
+
 export interface WorkspaceApi {
   load(): Promise<Workspace>
-  save(workspace: Workspace): Promise<void>
+  /** `localOnly`: return once this machine's disk holds the save, WITHOUT the SSH mirror
+   *  round trips (the mirror is owed and rides the next ordinary save). For a write-ahead barrier
+   *  that must be durable here but must not wait on a remote host — see WorkspaceStore.save. */
+  save(workspace: Workspace, opts?: WorkspaceSaveOptions): Promise<void>
   /** Reads <folder>/.nodeterm/project.json and returns the assembled Project (cwd resolved), or null. */
   probeFolder(folder: string): Promise<Project | null>
   /** Whether <folder>/.nodeterm/project.json is `present`, definitely `absent`, or `unreadable`
