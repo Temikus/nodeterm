@@ -101,6 +101,7 @@ export function ChatPanel({
   const hibernated = useAgentStatus((s) => s.byId[nodeId]?.hibernated)
   const paused = useAgentStatus((s) => s.byId[nodeId]?.paused)
   const dropped = useAgentStatus((s) => s.byId[nodeId]?.dropped)
+  const sessionEnded = useAgentStatus((s) => s.byId[nodeId]?.sessionEnded)
   const customAgents = useSettings((s) => s.settings.customAgents)
   const msgsRef = useRef<HTMLDivElement>(null)
   const prevState = useRef(state)
@@ -172,15 +173,15 @@ export function ChatPanel({
   }
 
   // Not just `working`: a TUI dialog (`waiting`/`blocked`) would be ANSWERED by sendText's Enter,
-  // and a hibernated/paused/dropped node's pane is a SHELL that would execute the text.
-  const refusal = chatSendRefusal({ state, hibernated, paused, dropped })
+  // and a pane whose CLI is gone (hibernated/paused/dropped/exited) is a SHELL that would execute it.
+  const refusal = chatSendRefusal(agentId, { state, hibernated, paused, dropped, sessionEnded })
   const agentLabel = chatAgentLabel(agentId, customAgents)
 
   const send = useCallback(async () => {
     const text = input.trim()
     // Read the store at SEND time, not the render-time values: a PermissionRequest (or an Eco
     // hibernation) that landed between the last render and this keypress must still block.
-    if (!text || chatSendRefusal(useAgentStatus.getState().byId[nodeId] ?? {}) !== null) return
+    if (!text || chatSendRefusal(agentId, useAgentStatus.getState().byId[nodeId] ?? {}) !== null) return
     const ok = await api.pty.sendText(nodeId, text)
     if (ok === 'pasted-not-submitted') {
       window.dispatchEvent(new CustomEvent('nodeterm:toast', { detail: { kind: 'error', message: TEXT_NOT_SUBMITTED } }))
@@ -195,7 +196,7 @@ export function ChatPanel({
     justSentRef.current = true
     setMessages((m) => [...m, { role: 'user', parts: [{ kind: 'text', text }] }])
     setInput('')
-  }, [api, input, nodeId])
+  }, [api, input, nodeId, agentId])
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Shift+Enter falls through to the textarea's own newline; an IME commit is not a send.

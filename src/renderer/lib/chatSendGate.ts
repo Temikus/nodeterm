@@ -1,4 +1,5 @@
 import type { AgentState } from '@shared/agents/normalize'
+import { agentProcessInPane } from '../terminal/live-work'
 
 /** The slice of a node's agent status the composer gate reads (`AgentNodeStatus` fits it). */
 export interface ChatGateStatus {
@@ -6,10 +7,11 @@ export interface ChatGateStatus {
   hibernated?: boolean
   paused?: boolean
   dropped?: boolean
+  sessionEnded?: boolean
 }
 
 /** Why the composer refuses to send; `null` = it may send. */
-export type ChatSendRefusal = 'working' | 'dialog' | 'asleep' | 'paused' | 'dropped' | null
+export type ChatSendRefusal = 'working' | 'dialog' | 'asleep' | 'paused' | 'dropped' | 'exited' | null
 
 /**
  * May the ⌘M chat composer type into the agent's pane right now — and if not, why?
@@ -22,27 +24,35 @@ export type ChatSendRefusal = 'working' | 'dialog' | 'asleep' | 'paused' | 'drop
  *   The pane then holds a select dialog the transcript view does not show, and Enter CONFIRMS the
  *   highlighted option — "Yes" by default. A chat message would silently grant a permission or
  *   pick an answer. Same trap CLAUDE.md documents for the in-place restart's `/exit`.
- * - **A SHELL** (hibernated / paused / dropped). Eco's hibernation exits the CLI and leaves the
- *   node's `state` at `done`, so the state alone reads "sendable" — but the pane now belongs to
- *   the login shell, and the message would be EXECUTED as a shell command. Pause and an
- *   unaccounted CLI exit (DROPPED) leave the pane in the same shell. These flags therefore rank
- *   ABOVE the state: a stale live state cannot vouch for a CLI that is known to be gone.
+ * - **A SHELL**: the CLI is no longer in the pane — Eco hibernated it, it was paused, it died
+ *   unaccounted for (DROPPED), or it announced its own exit (`/exit`, `/quit`, Ctrl+D → SessionEnd,
+ *   which Canvas records as `state: undefined` + `sessionEnded`). The message would be EXECUTED as
+ *   a shell command. Hibernation even leaves `state` at `done`, and an exit leaves it undefined, so
+ *   the state alone reads "sendable" either way; this check therefore ranks ABOVE the state.
  *
- * No hook knowledge (`state` undefined, no flags — a custom agent, a session with no event yet in
- * this app run) is ALLOWED: unknown is not unsafe, and refusing it would take the composer away
+ * Whether the CLI is in the pane is NOT decided here: it is `agentProcessInPane`
+ * (`terminal/live-work.ts`), the one rule the memory levers already use. A second copy of that flag
+ * set would drift the day a new "CLI gone" flag lands. The specific kinds below only pick the
+ * sentence; an unrecognised "not in pane" still refuses, as the generic `exited`.
+ *
+ * No hook knowledge (`state` undefined and no flags — a custom agent, a session with no event yet
+ * in this app run) is ALLOWED: unknown is not unsafe, and refusing it would take the composer away
  * from every such node. Only `done` is a positive "input box is up".
  */
-export function chatSendRefusal(s: ChatGateStatus): ChatSendRefusal {
-  if (s.dropped) return 'dropped'
-  if (s.paused) return 'paused'
-  if (s.hibernated) return 'asleep'
+export function chatSendRefusal(agentId: string, s: ChatGateStatus): ChatSendRefusal {
+  if (!agentProcessInPane(agentId, s)) {
+    if (s.dropped) return 'dropped'
+    if (s.paused) return 'paused'
+    if (s.hibernated) return 'asleep'
+    return 'exited'
+  }
   if (s.state === 'working') return 'working'
   if (s.state === 'waiting' || s.state === 'blocked') return 'dialog'
   return null
 }
 
-export function canSendFromChat(s: ChatGateStatus): boolean {
-  return chatSendRefusal(s) === null
+export function canSendFromChat(agentId: string, s: ChatGateStatus): boolean {
+  return chatSendRefusal(agentId, s) === null
 }
 
 /**
@@ -52,8 +62,9 @@ export function canSendFromChat(s: ChatGateStatus): boolean {
  * A dialog points back at the terminal through the chord actually bound to the markdown/chat
  * toggle (`chip`, from `chipFor('node.toggleMarkdown')`); `''` = unbound, and then the text names
  * the action instead of promising a chord that never fires. A shell-owned pane names the header
- * chip that resumes it — the same SLEEPING / PAUSED / DROPPED chip whose click runs the wake,
- * visible above this panel. A write failure (`readonly`) outranks everything: no state change will
+ * chip that resumes it — the same SLEEPING / PAUSED / DROPPED chip whose click runs the wake, shown
+ * in the header of the canvas node and of the kanban card modal alike (hence "the header"). An
+ * exited CLI has no such chip: it is relaunched in the terminal itself. A write failure (`readonly`) outranks everything: no state change will
  * make that session writable.
  */
 export function chatComposerPlaceholder({
@@ -76,11 +87,13 @@ export function chatComposerPlaceholder({
         ? `${agentLabel} is waiting for an answer in the terminal — press ${chip} to answer there`
         : `${agentLabel} is waiting for an answer in the terminal — switch back to the terminal to answer`
     case 'asleep':
-      return `${agentLabel} is asleep to save memory — click SLEEPING in the node header to resume it`
+      return `${agentLabel} is asleep to save memory — click SLEEPING in the header to resume it`
     case 'paused':
-      return `${agentLabel} is paused — click PAUSED in the node header to resume it`
+      return `${agentLabel} is paused — click PAUSED in the header to resume it`
     case 'dropped':
-      return `${agentLabel} is no longer running in this terminal — click DROPPED in the node header to resume it`
+      return `${agentLabel} is no longer running in this terminal — click DROPPED in the header to resume it`
+    case 'exited':
+      return `${agentLabel} has exited — relaunch it in the terminal`
     case null:
       return `Message ${agentLabel}…  (Enter to send, Shift+Enter for a new line)`
   }

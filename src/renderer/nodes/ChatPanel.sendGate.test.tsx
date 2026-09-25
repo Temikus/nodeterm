@@ -36,7 +36,7 @@ let root: Root
 
 function setAgentState(
   state: 'working' | 'waiting' | 'blocked' | 'done' | undefined,
-  extra: { hibernated?: boolean } = {}
+  extra: { hibernated?: boolean; sessionEnded?: boolean } = {}
 ): void {
   useAgentStatus.setState((s) => ({
     byId: { ...s.byId, [NODE]: { ...(s.byId[NODE] ?? {}), state, ...extra } as (typeof s.byId)[string] }
@@ -120,6 +120,24 @@ describe('ChatPanel send gate', () => {
     await act(async () => type(ta, 'ls -la'))
     await act(async () => {
       setAgentState('done', { hibernated: true })
+      enter(ta)
+    })
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('disables the composer after the CLI exited (/exit, Ctrl+D): state undefined, a SHELL owns the pane', async () => {
+    setAgentState(undefined, { sessionEnded: true })
+    const ta = await mount()
+    expect(ta.disabled).toBe(true)
+    expect(ta.placeholder).toMatch(/has exited/)
+  })
+
+  it('re-reads the exit at send time too', async () => {
+    setAgentState('done')
+    const ta = await mount()
+    await act(async () => type(ta, 'rm -rf build'))
+    await act(async () => {
+      setAgentState(undefined, { sessionEnded: true })
       enter(ta)
     })
     expect(sendText).not.toHaveBeenCalled()
