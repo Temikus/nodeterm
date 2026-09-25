@@ -3183,6 +3183,39 @@ body,
 .term-chat__input:disabled {
   opacity: 0.5;
 }
+.term-chat__bar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.term-chat__refresh {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.term-chat__refresh:hover {
+  background: rgba(var(--tint-rgb), 0.1);
+}
+/* Reasoning, collapsed by default and dimmed so it never reads as the answer. */
+.term-chat__thinking {
+  margin: 4px 0;
+  font-size: 12px;
+  color: rgba(var(--tint-rgb), 0.6);
+}
+.term-chat__thinking summary {
+  cursor: pointer;
+  font-style: italic;
+}
+.term-chat__thinking .term-chat__text {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(var(--tint-rgb), 0.15);
+}
 
 /* Transparent overlay that lets you pan across a terminal until you dwell/click. */
 .term-hover-guard {

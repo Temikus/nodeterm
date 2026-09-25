@@ -1,10 +1,13 @@
 import { TEXT_NOT_SUBMITTED } from '@shared/text-delivery'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { renderMarkdown } from '../lib/markdown'
 import { useAgentStatus } from '../state/agentStatus'
 import { useSession } from '../session/session'
 import type { ChatMessage } from '@shared/types'
 import { chipFor } from '../lib/keybindingOverrides'
+import { chatComposerPlaceholder, chatSendRefusal } from '../lib/chatSendGate'
+import { chatAgentLabel, chatKeyAction, isNearBottom, shouldFollowOnLoad } from '../lib/chatPanel'
+import { useSettings } from '../state/settings'
 import { E_UNSUPPORTED } from '@shared/rpc'
 
 // Memoized bubble: marked+DOMPurify re-ran for EVERY message on each ChatPanel render (each
@@ -93,20 +96,41 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [readonly, setReadonly] = useState(false)
   const state = useAgentStatus((s) => s.byId[nodeId]?.state)
+  // The shell-owned-pane flags, each as its own primitive selector (an object selector would
+  // re-render on every hook event for every node). See lib/chatSendGate.ts for why they gate.
+  const hibernated = useAgentStatus((s) => s.byId[nodeId]?.hibernated)
+  const paused = useAgentStatus((s) => s.byId[nodeId]?.paused)
+  const dropped = useAgentStatus((s) => s.byId[nodeId]?.dropped)
+  const sessionEnded = useAgentStatus((s) => s.byId[nodeId]?.sessionEnded)
+  const customAgents = useSettings((s) => s.settings.customAgents)
   const msgsRef = useRef<HTMLDivElement>(null)
   const prevState = useRef(state)
+  // Request token: only the NEWEST readTranscript may land. An older read resolving late (the
+  // sessionId changed underneath it, or a ↻ raced the turn-finish reload) would otherwise paint
+  // another session's thread over the current one. Bumped on unmount too, so a read that resolves
+  // after the panel closed is dropped rather than applied to a dead component.
+  const reqRef = useRef(0)
+  // Scroll-follow inputs, captured BEFORE a load changes the content: was the user following the
+  // bottom (updated on every scroll), and did they just send (they expect to see it land).
+  const nearBottomRef = useRef(true)
+  const justSentRef = useRef(false)
 
   const load = useCallback(() => {
+    const token = ++reqRef.current
     setLoadState((s) => (s === 'ok' ? s : 'loading')) // a reload never blanks a rendered thread
     // `nodeId` is what lets an SSH-project node resolve on its host; the rejection branch is what
     // keeps a surface that cannot read transcripts (Server Edition, relay tab) from silently
     // presenting itself as an empty conversation.
     void api.chat.readTranscript(sessionId, cwd, accountId, nodeId, agentId).then(
       (res) => {
+        if (token !== reqRef.current) return
         setMessages(res.messages)
         setLoadState(res.found ? 'ok' : 'missing')
       },
-      (e: unknown) => setLoadState(isUnsupported(e) ? 'unsupported' : 'error')
+      (e: unknown) => {
+        if (token !== reqRef.current) return
+        setLoadState(isUnsupported(e) ? 'unsupported' : 'error')
+      }
     )
   }, [api, sessionId, cwd, accountId, nodeId, agentId])
 
@@ -115,23 +139,49 @@ export function ChatPanel({
     load()
   }, [load])
 
-  // Reload when a turn completes (working -> not working).
+  // Invalidate any in-flight read when the panel goes away.
+  useEffect(
+    () => () => {
+      reqRef.current++
+    },
+    []
+  )
+
+  // Reload when a turn completes (working -> not working). Sessions whose hooks never report
+  // `working` never take this path — the bar's ↻ is their reload.
   useEffect(() => {
     if (prevState.current === 'working' && state !== 'working') load()
     prevState.current = state
   }, [state, load])
 
-  // Keep pinned to the latest message.
-  useEffect(() => {
+  // Follow the newest message only when the user was already at the bottom or just sent; a user
+  // scrolled up reading an earlier answer keeps their place. Layout effect: the jump lands before
+  // paint, so a followed thread never flashes one frame short.
+  useLayoutEffect(() => {
     const el = msgsRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    if (shouldFollowOnLoad({ wasNearBottom: nearBottomRef.current, justSent: justSentRef.current })) {
+      el.scrollTop = el.scrollHeight
+      nearBottomRef.current = true
+    }
+    justSentRef.current = false
   }, [messages])
 
-  const working = state === 'working'
+  const onScroll = () => {
+    const el = msgsRef.current
+    if (el) nearBottomRef.current = isNearBottom(el)
+  }
+
+  // Not just `working`: a TUI dialog (`waiting`/`blocked`) would be ANSWERED by sendText's Enter,
+  // and a pane whose CLI is gone (hibernated/paused/dropped/exited) is a SHELL that would execute it.
+  const refusal = chatSendRefusal(agentId, { state, hibernated, paused, dropped, sessionEnded })
+  const agentLabel = chatAgentLabel(agentId, customAgents)
 
   const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || working) return
+    // Read the store at SEND time, not the render-time values: a PermissionRequest (or an Eco
+    // hibernation) that landed between the last render and this keypress must still block.
+    if (!text || chatSendRefusal(agentId, useAgentStatus.getState().byId[nodeId] ?? {}) !== null) return
     const ok = await api.pty.sendText(nodeId, text)
     if (ok === 'pasted-not-submitted') {
       window.dispatchEvent(new CustomEvent('nodeterm:toast', { detail: { kind: 'error', message: TEXT_NOT_SUBMITTED } }))
@@ -143,15 +193,21 @@ export function ChatPanel({
       return
     }
     // Optimistic: show the prompt immediately; the next load() reconciles from the transcript.
+    justSentRef.current = true
     setMessages((m) => [...m, { role: 'user', parts: [{ kind: 'text', text }] }])
     setInput('')
-  }, [api, input, working, nodeId])
+  }, [api, input, nodeId, agentId])
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      void send()
-    }
+    // Shift+Enter falls through to the textarea's own newline; an IME commit is not a send.
+    const action = chatKeyAction({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      isComposing: e.nativeEvent.isComposing || e.keyCode === 229
+    })
+    if (action !== 'send') return
+    e.preventDefault()
+    void send()
   }
 
   // Whatever the markdown/chat toggle is bound to; '' when unbound, in which case the bar names
@@ -162,9 +218,19 @@ export function ChatPanel({
     <div className="term-chat nodrag nowheel">
       <div className="term-chat__bar">
         <span>{title ?? 'Chat'}</span>
-        <span className="term-chat__hint">{hint ?? (mdChip ? `${mdChip} to exit` : 'Exit')}</span>
+        <span className="term-chat__bar-end">
+          <button
+            className="term-chat__refresh"
+            onClick={load}
+            title="Reload conversation"
+            aria-label="Reload conversation"
+          >
+            ↻
+          </button>
+          <span className="term-chat__hint">{hint ?? (mdChip ? `${mdChip} to exit` : 'Exit')}</span>
+        </span>
       </div>
-      <div className="term-chat__msgs" ref={msgsRef}>
+      <div className="term-chat__msgs" ref={msgsRef} onScroll={onScroll}>
         {messages.length === 0 && loadState !== 'loading' && (
           <div className="term-chat__empty">
             <div>{EMPTY_TEXT[loadState].title}</div>
@@ -181,8 +247,14 @@ export function ChatPanel({
         {messages.map((m, i) => (
           <div key={i} className={`term-chat__msg term-chat__msg--${m.role}`}>
             {m.parts.map((p, j) =>
-              p.kind === 'text' || p.kind === 'thinking' ? (
+              p.kind === 'text' ? (
                 <MarkdownText key={j} text={p.text} />
+              ) : p.kind === 'thinking' ? (
+                // Reasoning, not the answer: collapsed by default so it cannot be mistaken for it.
+                <details key={j} className="term-chat__thinking">
+                  <summary>Thinking</summary>
+                  <MarkdownText text={p.text} />
+                </details>
               ) : (
                 <details key={j} className="term-chat__tool">
                   <summary>
@@ -203,14 +275,8 @@ export function ChatPanel({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={
-            readonly
-              ? "Can't write to this session"
-              : working
-                ? 'Claude is working…'
-                : 'Message Claude…  (Enter to send)'
-          }
-          disabled={readonly || working}
+          placeholder={chatComposerPlaceholder({ readonly, refusal, agentLabel, chip: mdChip })}
+          disabled={readonly || refusal !== null}
           rows={2}
         />
       </div>
