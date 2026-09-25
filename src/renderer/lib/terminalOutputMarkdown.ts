@@ -35,6 +35,8 @@ const terminalMarked = new Marked({
   breaks: true,
   gfm: true,
   renderer: {
+    // Positional `(html, block)` is marked 12's Renderer signature; marked 13+ passes ONE token
+    // object instead, so an upgrade must rewrite this hook (the tests would go red, not silent).
     html(html: string, block?: boolean): string {
       if (!block) return escapeHtml(html)
       // A block-level html token swallows every line up to the next blank line; show it as the
@@ -44,9 +46,10 @@ const terminalMarked = new Marked({
   }
 })
 
-/** Strip trailing whitespace from every line, then the trailing blank lines capture-pane pads. */
+/** Strip trailing whitespace (and a CRLF capture's `\r` — explicit, though JS's /m `$` and marked's
+ *  own CRLF normalization already cover it) from every line, then capture-pane's blank-line pad. */
 function trimCapture(text: string): string {
-  return text.replace(/[ \t]+$/gm, '').replace(/\s+$/, '')
+  return text.replace(/[ \t\r]+$/gm, '').replace(/\s+$/, '')
 }
 
 export function renderTerminalOutput(text: string): string {

@@ -58,6 +58,14 @@ describe('renderTerminalOutput', () => {
     expect(html).not.toContain('javascript:')
   })
 
+  it('renders a CRLF capture exactly like its LF twin (padding before the \\r included)', () => {
+    // Characterization, not a regression pin: JS's /m `$` already treats \r as a line terminator
+    // and marked normalizes \r\n, so this held before the explicit \r strip — it guards both.
+    expect(renderTerminalOutput('```\r\na  \r\nb\t\r\n```\r\nx \r\ny\r\n\r\n')).toBe(
+      renderTerminalOutput('```\na\nb\n```\nx\ny')
+    )
+  })
+
   it('renders empty input as empty', () => {
     expect(renderTerminalOutput('')).toBe('')
     expect(renderTerminalOutput('\n\n  \n')).toBe('')

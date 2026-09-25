@@ -1537,7 +1537,12 @@ session.
 
 Monaco is wired in `renderer/editor/monaco-setup.ts` (language workers bundled via Vite
 `?worker` — no CDN; CSP `worker-src` allows them). Markdown rendering is shared in
-`renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize).
+`renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize). Terminal OUTPUT (the ⌘M output view)
+goes through `renderer/lib/terminalOutputMarkdown.ts` instead: a private `Marked` instance with
+`breaks` on (output is line-oriented — without it `ls -l` joined into one paragraph) that renders
+raw-HTML tokens as escaped TEXT (a program's `<stdin>` is not markup; parsed as HTML, DOMPurify
+stripped it) and trims capture-pane's trailing padding. The escape is on the `html` token, never a
+global pre-escape of `<`, which would double-escape code spans/fences.
 
 ### Webview keep-alive across project switches (browser/web nodes)
 
