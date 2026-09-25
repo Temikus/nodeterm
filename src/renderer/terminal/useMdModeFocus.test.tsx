@@ -4,7 +4,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { focusXtermUnlessCovered, mayRestoreFocus, useMdModeFocus, type FocusableTerm } from './useMdModeFocus'
+import {
+  focusXtermUnlessCovered,
+  mayRestoreFocus,
+  terminalOwnsFileInput,
+  useMdModeFocus,
+  type FocusableTerm
+} from './useMdModeFocus'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -168,5 +174,26 @@ describe('focusXtermUnlessCovered', () => {
     const src = readFileSync(resolve(__dirname, '../components/kanban/ModalTerminal.tsx'), 'utf8').replace(/\r\n/g, '\n')
     expect(src).toMatch(/useMdModeFocus\(covered,/)
     expect(src).toMatch(/focusXtermUnlessCovered\(term, coveredRef\.current\)/)
+  })
+})
+
+describe('terminalOwnsFileInput', () => {
+  it('hands dropped / pasted files to the terminal only while the ⌘M view is not covering it', () => {
+    expect(terminalOwnsFileInput(false)).toBe(true)
+    expect(terminalOwnsFileInput(true)).toBe(false)
+  })
+
+  it("gates every TerminalNode file-input handler on the node's ⌘M cover", () => {
+    // Source pin: the handlers sit on `.term-node__body`, which ALSO hosts the ⌘M overlay — so a
+    // screenshot pasted into the ChatPanel composer (or a file dropped on the view) was caught in
+    // the capture phase and pasted as a path into the hidden pane, with focus stolen to match.
+    // The handlers are closures in a component that cannot be mounted here.
+    const src = readFileSync(resolve(__dirname, '../nodes/TerminalNode.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    for (const handler of ['onBodyDragOver', 'onBodyDrop', 'onBodyPaste']) {
+      const start = src.indexOf(`const ${handler} = `)
+      expect(start, handler).toBeGreaterThan(-1)
+      const head = src.slice(start, src.indexOf('\n', src.indexOf('\n', start) + 1))
+      expect(head, handler).toMatch(/if \(!terminalOwnsFileInput\(mdModeRef\.current\)\) return/)
+    }
   })
 })

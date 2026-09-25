@@ -93,6 +93,8 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
   const observedAgentId = useAgentStatus((st) => st.byId[session.id]?.agentId)
   const paused = useAgentStatus((st) => !!st.byId[session.id]?.paused)
   const dropped = useAgentStatus((st) => !!st.byId[session.id]?.dropped)
+  const hibernated = useAgentStatus((st) => !!st.byId[session.id]?.hibernated)
+  const wakeBlocked = useAgentStatus((st) => st.byId[session.id]?.wakeBlocked)
   // Same chip as the card and the canvas node header — the modal is where a user checks WHICH
   // session this is, so the account belongs in its header chips, not only two views away.
   const observedAccount = useAgentStatus((st) => st.byId[session.id]?.account)
@@ -368,6 +370,22 @@ export function CardModal({ session, columnTitle, board, onChangeBoard, onClose,
               onClick={() => wakeHibernatedNode(session.id)}
             >
               PAUSED
+            </button>
+          )}
+          {isTerminal && hibernated && !paused && !dropped && (
+            // Eco's SLEEPING chip, the canvas node's third pause chip (ranked after DROPPED and
+            // PAUSED there too — they are mutually exclusive by construction, the guard only mirrors
+            // the node's JSX order). Opening the card usually wakes the session on its own, so this
+            // is mostly seen for the moment that takes — and for a REFUSED wake, which is exactly
+            // when the user needs it: the ChatPanel's asleep placeholder sends them to "SLEEPING in
+            // the header", and the refusal's sentence lives on the chip, as on the canvas node.
+            <button
+              className="kanban-badge kanban-badge--sleeping"
+              style={{ cursor: 'pointer', border: 'none' }}
+              title={wakeBlocked ?? 'Agent hibernated to save memory — click to resume'}
+              onClick={() => wakeHibernatedNode(session.id)}
+            >
+              {wakeBlocked ? 'SLEEPING — NOT RESUMED' : 'SLEEPING'}
             </button>
           )}
           {isTerminal && (

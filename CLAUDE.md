@@ -1264,7 +1264,11 @@ session.
   (`terminal/useMdModeFocus.ts`). While the view is open, every "take the keyboard" path (hover
   dwell, click, sidebar/notification jump) goes through `focusXtermUnlessCovered` and leaves the
   hidden xterm unfocused — the overlay sits inside the node body, so a dwell over it used to route
-  keystrokes into a pane nobody could see (source-pinned in `useMdModeFocus.test.tsx`). Tag chips via `NodeTags`.
+  keystrokes into a pane nobody could see. The body's file DROP / file PASTE handlers (which focus
+  the xterm and paste paths into it) are the other way in, and they stand aside while covered
+  (`terminalOwnsFileInput`): a screenshot pasted into the ChatPanel composer used to be caught in
+  the capture phase and typed as a path into the hidden pane. Both are source-pinned in
+  `useMdModeFocus.test.tsx`. Tag chips via `NodeTags`.
   **Selection + copy is tmux's** (its mouse is on — see the tmux section): drag to select, wheel to
   scroll tmux's history. A drag copies via copy-mode, and tmux emits **OSC 52** to the client, whose
   handler writes the **system clipboard** — the one copy path on every platform *and* over SSH (no
@@ -4756,9 +4760,11 @@ the Settings section and ShortcutsPanel start disagreeing about what a chord mea
   stays MOUNTED underneath (covered, not swapped, so its co-attach never detaches/re-attaches) and
   gets the same focus hand-off as the node (`ModalTerminal`'s `covered` → `useMdModeFocus`); and the
   chord reaches the modal through `window.nodeTerminal.onMarkdownToggle` only while it is the top
-  dialog, while the canvas node's own subscription refuses the chord whenever a board is up
-  (`lib/markdownChord.ts` `canvasOwnsMarkdownChord` — a hover flag can go stale under the opaque
-  board, so one press could otherwise flip both). The overlay sits at z 5 in the pane, BELOW the
+  dialog, while the canvas terminal AND editor nodes' own subscriptions refuse the chord whenever a
+  board is up (`lib/markdownChord.ts` `canvasOwnsMarkdownChord` — a hover flag can go stale under
+  the opaque board, so one press could otherwise flip both). The header also carries the node's
+  pause chips — DROPPED, PAUSED and SLEEPING (Eco, with the refused-wake sentence) — each clicking
+  through the same `wakeHibernatedNode` trigger as the canvas chip. The overlay sits at z 5 in the pane, BELOW the
   sheet's resize handles (z 6/7, issue #389) — pinned in `styles.kanban.test.ts`.
   **The 💬 icon means COMMENTS on both surfaces** (repurposed from the markdown view — ⌘M still
   toggles markdown/chat on the canvas node, and on the card modal): on a terminal node it opens a right-side comments

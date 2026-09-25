@@ -174,7 +174,7 @@ import { coldSelfHealVerdict } from '../terminal/cold-self-heal'
 import { WakeInputBuffer } from '../terminal/wake-input-buffer'
 import { FindBar } from '../components/FindBar'
 import { TerminalMarkdownView } from './TerminalMarkdownView'
-import { focusXtermUnlessCovered, useMdModeFocus } from '../terminal/useMdModeFocus'
+import { focusXtermUnlessCovered, terminalOwnsFileInput, useMdModeFocus } from '../terminal/useMdModeFocus'
 import { canvasOwnsMarkdownChord } from '../lib/markdownChord'
 import { IconChat, IconChevronDown, IconChevronRight, IconClose, IconEye, IconEyeOff, IconGrid, IconMic, IconMoveTo, IconPlay, IconReload, IconSearch, IconSparkle } from '../components/icons'
 import { NodeLabels } from '../components/kanban/NodeLabels'
@@ -5078,6 +5078,7 @@ export function TerminalNode({
 
   // ---- file drop: paste dropped file paths into the terminal (native-terminal behavior) ----
   const onBodyDragOver = (e: React.DragEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // the ⌘M view is on top: no drop overlay
     if (!Array.from(e.dataTransfer.types).includes('Files')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
@@ -5156,6 +5157,7 @@ export function TerminalNode({
   }
 
   const onBodyDrop = async (e: React.DragEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // covered by the ⌘M view (see predicate)
     const files = Array.from(e.dataTransfer.files)
     setDropping(false)
     if (!files.length) return
@@ -5169,6 +5171,7 @@ export function TerminalNode({
   // CAPTURE phase: xterm listens on its own textarea below us, so stopping here is the only way to
   // keep it from also pasting whatever text the clipboard happened to carry alongside the file.
   const onBodyPaste = (e: React.ClipboardEvent) => {
+    if (!terminalOwnsFileInput(mdModeRef.current)) return // the ChatPanel composer takes its own paste
     const files = pastedFiles(e.clipboardData)
     if (files.length) {
       e.preventDefault()

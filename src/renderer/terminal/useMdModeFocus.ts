@@ -73,3 +73,19 @@ export function mayRestoreFocus(
 export function focusXtermUnlessCovered(term: FocusableTerm | null | undefined, covered: boolean): void {
   if (!covered) term?.focus()
 }
+
+/**
+ * Whether a file DROP or PASTE on the node body belongs to the terminal. The file handlers sit on
+ * `.term-node__body`, which also hosts the ⌘M face — so while the view covers the xterm, a
+ * screenshot pasted into the ChatPanel composer (or a file dropped on the output view) was caught
+ * in the capture phase, written as a path into the hidden pane, and the xterm focused to match.
+ * Covered, the handlers stand aside and the event behaves natively for whatever is under the
+ * pointer / caret: a paste lands in the composer, a drop falls to the window-level guard.
+ *
+ * Keyed on the same cover flag as `focusXtermUnlessCovered`, not on the event target: the overlay
+ * spans the whole body, so "covered" already answers "is this event aimed at the view", and one
+ * flag cannot drift from the focus rule the way a second list of overlay selectors could.
+ */
+export function terminalOwnsFileInput(covered: boolean): boolean {
+  return !covered
+}

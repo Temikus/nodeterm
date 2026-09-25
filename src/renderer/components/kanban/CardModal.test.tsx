@@ -72,6 +72,14 @@ vi.mock('../../nodes/ChatPanel', () => ({
   )
 }))
 
+// The wake trigger the header's DROPPED / PAUSED / SLEEPING chips click through, spied so a test can
+// prove the chip reaches the SAME trigger the canvas node's chip uses (not a bespoke resume path).
+const wakeMock = vi.hoisted(() => ({ calls: [] as string[] }))
+vi.mock('../../nodes/TerminalNode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../nodes/TerminalNode')>()),
+  wakeHibernatedNode: (nodeId: string) => void wakeMock.calls.push(nodeId)
+}))
+
 vi.mock('../../nodes/BrowserSurface', () => ({
   BrowserSurface: ({ nodeId }: { nodeId: string }) => (
     <div className="browser-surface" data-node-id={nodeId}>
@@ -625,6 +633,36 @@ describe('CardModal', () => {
       // …and it is per OPENING: coming back to the first card shows its live terminal again.
       render(root, termSession({ agentId: undefined, spawn: {} }))
       expect(document.body.querySelector('.md-view-mock')).toBeNull()
+      act(() => root.unmount())
+    })
+
+    it('a hibernated session shows a SLEEPING chip in the header that wakes it (the placeholder names it)', () => {
+      // The ChatPanel's asleep placeholder tells the user to click SLEEPING "in the header" — true
+      // on the canvas node, and it has to be true here too, or the modal user is sent looking for a
+      // chip that does not exist.
+      const root = createRoot(host)
+      wakeMock.calls.length = 0
+      useAgentStatus.setState({ byId: { 'node-md-1': { hibernated: true } } } as never)
+      render(root, termSession())
+      const chip = () =>
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button.kanban-badge')).find((b) =>
+          b.textContent?.startsWith('SLEEPING')
+        )
+      expect(chip()).toBeTruthy()
+      act(() => chip()!.click())
+      expect(wakeMock.calls).toEqual(['node-md-1'])
+      // A refused wake carries its sentence on the chip, exactly as on the canvas node.
+      act(() =>
+        useAgentStatus.setState({ byId: { 'node-md-1': { hibernated: true, wakeBlocked: 'Pane is busy' } } } as never)
+      )
+      expect(chip()!.textContent).toBe('SLEEPING — NOT RESUMED')
+      expect(chip()!.title).toBe('Pane is busy')
+      // Mutually exclusive with PAUSED / DROPPED, in the canvas node's order: one chip, never two.
+      act(() => useAgentStatus.setState({ byId: { 'node-md-1': { hibernated: true, paused: true } } } as never))
+      expect(chip()).toBeUndefined()
+      expect(document.body.textContent).toContain('PAUSED')
+      act(() => useAgentStatus.setState({ byId: { 'node-md-1': {} } } as never))
+      expect(chip()).toBeUndefined()
       act(() => root.unmount())
     })
 

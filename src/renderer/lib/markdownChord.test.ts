@@ -23,4 +23,13 @@ describe('canvasOwnsMarkdownChord', () => {
       /onMarkdownToggle\(\(\) => \{\s*if \(!canvasOwnsMarkdownChord\(hoveredRef\.current, isGlobalKanbanOpen\(\) \|\| isKanbanOpen\(/
     )
   })
+
+  it('the editor node asks the same question (a stale-hovered editor under the board refuses too)', () => {
+    // The editor's preview flip was gated on hover alone, so a press meant for the card modal also
+    // flipped the hidden preview of whichever editor was under the pointer when the board opened.
+    const src = readFileSync(resolve(__dirname, '../nodes/EditorNode.tsx'), 'utf8').replace(/\r\n/g, '\n')
+    expect(src).toMatch(
+      /onMarkdownToggle\(\(\) => \{\s*if \(canvasOwnsMarkdownChord\(hoveredRef\.current, isGlobalKanbanOpen\(\) \|\| isKanbanOpen\(/
+    )
+  })
 })

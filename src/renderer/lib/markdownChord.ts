@@ -1,5 +1,6 @@
 /**
- * Whether the CANVAS terminal node owns a ⌘M (`node.toggleMarkdown`) press.
+ * Whether a CANVAS node (the terminal node's ⌘M view, the editor node's preview) owns a ⌘M
+ * (`node.toggleMarkdown`) press.
  *
  * Only a hovered node takes the chord — and never while a kanban board is up. The board is an
  * opaque overlay over a still-mounted canvas, and a node's hover flag is driven by mouseenter /
