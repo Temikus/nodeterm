@@ -1316,6 +1316,12 @@ session.
   have no remote fs API with which to verify a token; relay tabs do have a core-bound, jailed fs
   API and therefore support file links. Windows existence matching is case-insensitive and accepts
   both separators; UNC tokens are refused whole before they can be reinterpreted as cwd-relative.
+  **Home-relative `~/x` tokens** (Claude Code prints its plan file as `~/.claude/plans/<name>.md`)
+  stay `~`-rooted all the way to the fs call and are expanded by the core that OWNS the filesystem
+  — `expandHomePath` in `core/fs-handlers.ts` for desktop/Server Edition, the remote shell for
+  `sshFs` — because the renderer does not know that home. A `~` after a path character (`a~/x`)
+  or `~user/x` is not a home path and yields no link. The relay's jailed `fs.*` calls fs-ops
+  directly and does not expand, so a relay tab's `~` token fails closed (no link).
 - **Agent** (`createAgentNode(agentId, …)`) — a terminal preset that runs an agent CLI as its
   `initialCommand` (runs once on open via `transport.write`, then cleared), with `data.agentId`
   set. Builtins (`claude`/`codex`/`gemini`) come from `AGENT_CONFIG` (clay color etc.).
