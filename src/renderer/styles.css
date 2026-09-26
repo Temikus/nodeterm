@@ -1986,7 +1986,7 @@ body,
 .github-link-chip__dot--open { background: var(--success); }
 .github-link-chip__dot--draft { background: var(--muted); }
 .github-link-chip__dot--merged { background: #bf5af2; }
-.github-link-chip__dot--closed { background: var(--danger, #ff453a); }
+.github-link-chip__dot--closed { background: var(--danger); }
 .github-link-chip__dot--unknown { background: rgba(var(--tint-rgb), 0.25); }
 
 .github-link-picker {
